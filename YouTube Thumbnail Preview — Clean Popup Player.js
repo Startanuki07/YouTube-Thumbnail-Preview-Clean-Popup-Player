@@ -7,9 +7,9 @@
 // @name:es      YouTube Vista Previa de Miniatura — Reproductor Emergente Limpio
 // @name:pt-BR   YouTube Pré-visualização de Miniatura — Reprodutor Popup Limpo
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
-// @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07?locale_override=1
-// @namespace    https://github.com/Startanuki07
-// @version      1.3.3
+// @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
+// @homepageURL  https://github.com/Startanuki07
+// @version      1.5.0.0
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -73,12 +73,10 @@
     style.textContent = `
     #masthead-container, ytd-masthead, #secondary, #related, #comments,
     ytd-comments, #below, ytd-watch-metadata, ytd-playlist-panel-renderer, #chat-container,
-    yt-notification-action-renderer, yt-confirm-dialog-renderer,
+    tp-yt-paper-toast, yt-notification-action-renderer, yt-confirm-dialog-renderer,
     ytd-single-option-survey-renderer, ytd-upsell-dialog-renderer,
     ytd-mealbar-promo-renderer, ytd-enforcement-message-view-model,
     #splash-screen, ytd-watch-skeleton, .watch-skeleton, #skeleton,
-    .ytp-fullscreen-grid, .ytp-fullscreen-grid-stills-container, .ytp-suggestion-set,
-    .ytp-ce-element, .ytp-ce-covering-overlay, .ytp-ce-element-shadow,
     .ytp-cards-button, .ytp-cards-teaser, .ytp-cards-button-icon,
     button[aria-label*="カード"], button[aria-label*="Card"],
     .yt-spec-button-shape-next--overlay,
@@ -123,9 +121,29 @@
         if (data.type === "GET_QUALITY" && player?.getAvailableQualityLevels) {
           window.parent.postMessage(JSON.stringify({ type: "QUALITY_LIST", levels: player.getAvailableQualityLevels(), current: player.getPlaybackQuality() }), "*");
         }
-        if (data.type === "SET_QUALITY" && player?.setPlaybackQualityRange) {
-          player.setPlaybackQualityRange(data.value, data.value);
-          player.setPlaybackQuality(data.value);
+        if (data.type === "SET_QUALITY" && player) {
+          if (data.value === "auto" || data.value === "default") {
+            const levels = player.getAvailableQualityLevels ? player.getAvailableQualityLevels() : [];
+            let target = "default";
+
+            if (levels.includes("hd1080")) {
+              target = "hd1080";
+            } else if (levels.includes("hd720")) {
+              target = "hd720";
+            } else if (levels.length > 0) {
+              target = levels.find(l => l !== "auto" && l !== "highres") || "default";
+            }
+
+            if (target !== "default") {
+              if (player.setPlaybackQualityRange) player.setPlaybackQualityRange(target, target);
+              if (player.setPlaybackQuality) player.setPlaybackQuality(target);
+            } else {
+              if (player.setPlaybackQuality) player.setPlaybackQuality("default");
+            }
+          } else {
+            if (player.setPlaybackQualityRange) player.setPlaybackQualityRange(data.value, data.value);
+            if (player.setPlaybackQuality) player.setPlaybackQuality(data.value);
+          }
         }
       } catch (err) {}
     });
@@ -163,35 +181,50 @@
     if (document.querySelector("video")) _waitForVideo();
     else _videoWatcher.observe(document.body || document.documentElement, { childList: true, subtree: true });
 
-    const SAFE_TIME = 260;
     const protectMenu = (menu) => {
-      if (menu.__ytSafe) return;
-      menu.__ytSafe = true;
+      if (menu.__ytProtecting) return;
+      menu.__ytProtecting = true;
+
       const ac = new AbortController();
       const { signal } = ac;
-      const block = (e) => { e.stopImmediatePropagation(); e.stopPropagation(); if (e.cancelable) e.preventDefault(); };
+      const block = (e) => {
+        if (!menu.contains(e.target)) {
+          e.stopImmediatePropagation();
+          e.stopPropagation();
+        }
+      };
       const opts = { capture: true, signal };
-      menu.addEventListener("mouseleave",   block, opts);
-      menu.addEventListener("mouseout",     block, opts);
-      menu.addEventListener("pointerleave", block, opts);
-      window.addEventListener("blur",         block, opts);
+      menu.addEventListener("mouseleave",   (e) => e.stopImmediatePropagation(), opts);
+      menu.addEventListener("mouseout",     (e) => e.stopImmediatePropagation(), opts);
+      menu.addEventListener("pointerleave", (e) => e.stopImmediatePropagation(), opts);
+      window.addEventListener("blur",       (e) => e.stopImmediatePropagation(), opts);
       document.addEventListener("mousedown",  block, opts);
       document.addEventListener("pointerdown", block, opts);
-      setTimeout(() => ac.abort(), SAFE_TIME);
+
+      const closeWatcher = new MutationObserver(() => {
+        if (menu.style.display === "none" || !menu.isConnected) {
+          ac.abort();
+          menu.__ytProtecting = false;
+          closeWatcher.disconnect();
+        }
+      });
+      closeWatcher.observe(menu, { attributes: true, attributeFilter: ["style"] });
     };
+
     const menuObserver = new MutationObserver(() => {
       const menu = document.querySelector(".ytp-settings-menu");
-      if (menu) protectMenu(menu);
+      if (menu && menu.style.display !== "none") protectMenu(menu);
     });
     CleanupManager.addObserver(menuObserver);
-    menuObserver.observe(document.body, { childList: true, subtree: true });
+    menuObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
 
     const dialogObserver = new MutationObserver(() => {
-      const dialog = document.querySelector("yt-notification-action-renderer, yt-confirm-dialog-renderer");
+      const dialog = document.querySelector("tp-yt-paper-toast, yt-notification-action-renderer, yt-confirm-dialog-renderer");
       if (dialog) {
+        const closeBtn = dialog.querySelector("#close-button button, #close-button");
         const btn = dialog.querySelector("button, #confirm-button, yt-button-renderer");
-        if (btn) btn.click();
-        dialog.style.display = "none";
+        if (closeBtn) { closeBtn.click(); } else if (btn) { btn.click(); }
+        dialog.style.setProperty("display", "none", "important");
       }
     });
     CleanupManager.addObserver(dialogObserver);
@@ -217,6 +250,49 @@
     overlayObserver.observe(document.body, { childList: true, subtree: true });
     forceHideOverlays();
 
+    let _toastTimer = null;
+    let _settingsClickCount = 0;
+    let _settingsClickResetTimer = null;
+
+    const clickHintHandler = (e) => {
+      if (e.target.closest(".ytp-settings-button")) {
+        _settingsClickCount++;
+
+        clearTimeout(_settingsClickResetTimer);
+        _settingsClickResetTimer = setTimeout(() => {
+          _settingsClickCount = 0;
+        }, 3000);
+
+        if (_settingsClickCount < 2) return;
+        let toast = document.getElementById("yt-adblock-hint-toast");
+        if (!toast) {
+          toast = document.createElement("div");
+          toast.id = "yt-adblock-hint-toast";
+          toast.textContent = "If the ⚙️ menu fails to open, please check your ad-blocker's filter lists.";
+          toast.style.cssText = `
+            position: fixed; bottom: 75px; left: 50%; transform: translateX(-50%);
+            background: rgba(45, 45, 45, 0.65); color: #fff; padding: 10px 18px;
+            border-radius: 8px; font-size: 13px; font-weight: 500;
+            backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);
+            z-index: 2147483647; pointer-events: none; opacity: 0;
+            transition: opacity 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); white-space: nowrap;
+          `;
+          document.body.appendChild(toast);
+        }
+
+        toast.style.opacity = "0";
+        void toast.offsetWidth;
+        toast.style.opacity = "1";
+
+        clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => {
+          if (toast) toast.style.opacity = "0";
+        }, 4000);
+      }
+    };
+    CleanupManager.addListener(document, "click", clickHintHandler, { capture: true });
+
     return;
   }
 
@@ -225,9 +301,10 @@
     ytThumbButtonSize: 24,
     ytThumbFontSize: 16,
     ytThumbOpacity: 0.7,
-    ytButtonLayout: "horizontal",
     ytButtonSpacing: 12,
     ytButtonsAlwaysVisible: false,
+    ytShowPlayBtn: true,
+    ytShowCommentBtn: true,
     ytOverlayOpacity: 0.85,
     ytPopupButtonOffset: 56,
     ytPopupSymbolSize: 24,
@@ -283,9 +360,6 @@
       "pt-BR": "(Atualização necessária para Layout/Espaçamento)",
       fr: "(Actualisation requise pour Disposition/Espacement)",
     },
-    layout: { en: "Layout", "zh-TW": "排列", "zh-CN": "排列", ja: "レイアウト", ko: "레이아웃", es: "Diseño", "pt-BR": "Layout", fr: "Disposition" },
-    horizontal: { en: "Horizontal", "zh-TW": "水平", "zh-CN": "水平", ja: "横並び", ko: "가로", es: "Horizontal", "pt-BR": "Horizontal", fr: "Horizontal" },
-    vertical: { en: "Vertical", "zh-TW": "垂直", "zh-CN": "垂直", ja: "縦並び", ko: "세로", es: "Vertical", "pt-BR": "Vertical", fr: "Vertical" },
     always_visible: {
       en: "Always Visible",
       "zh-TW": "常駐顯示",
@@ -295,6 +369,26 @@
       es: "Siempre visible",
       "pt-BR": "Sempre visível",
       fr: "Toujours visible",
+    },
+    show_play_btn: {
+      en: "Show ▶ Play button",
+      "zh-TW": "顯示 ▶ 播放按鈕",
+      "zh-CN": "显示 ▶ 播放按钮",
+      ja: "▶ 再生ボタンを表示",
+      ko: "▶ 재생 버튼 표시",
+      es: "Mostrar botón ▶ Reproducir",
+      "pt-BR": "Mostrar botão ▶ Reproduzir",
+      fr: "Afficher le bouton ▶ Lire",
+    },
+    show_comment_btn: {
+      en: "Show 💬 Comment button",
+      "zh-TW": "顯示 💬 留言按鈕",
+      "zh-CN": "显示 💬 评论按钮",
+      ja: "💬 コメントボタンを表示",
+      ko: "💬 댓글 버튼 표시",
+      es: "Mostrar botón 💬 Comentarios",
+      "pt-BR": "Mostrar botão 💬 Comentários",
+      fr: "Afficher le bouton 💬 Commentaires",
     },
     player_settings: {
       en: "Player Settings (Live)",
@@ -307,16 +401,6 @@
       fr: "Paramètres du lecteur (En direct)",
     },
     bg_density: { en: "BG Density", "zh-TW": "黑幕濃度", "zh-CN": "黑幕浓度", ja: "背景濃度", ko: "배경 밀도", es: "Densidad de fondo", "pt-BR": "Densidade de fundo", fr: "Densité d'arrière-plan" },
-    icon_pos: {
-      en: "Icon Position (Live)",
-      "zh-TW": "控制圖示位置 (即時)",
-      "zh-CN": "控制图标位置 (实时)",
-      ja: "アイコン位置 (リアルタイム)",
-      ko: "아이콘 위치 (실시간)",
-      es: "Posición del icono (En vivo)",
-      "pt-BR": "Posição do ícone (Ao vivo)",
-      fr: "Position de l'icône (En direct)",
-    },
     v_pos: { en: "V-Pos", "zh-TW": "垂直位置", "zh-CN": "垂直位置", ja: "垂直位置", ko: "수직 위치", es: "Pos. vertical", "pt-BR": "Pos. vertical", fr: "Pos. verticale" },
     icon_size: { en: "Icon Size", "zh-TW": "符號大小", "zh-CN": "图标大小", ja: "アイコンサイズ", ko: "아이콘 크기", es: "Tamaño de icono", "pt-BR": "Tamanho do ícone", fr: "Taille de l'icône" },
     icon_opacity: {
@@ -411,7 +495,6 @@
       "pt-BR": "Sem comentários",
       fr: "Aucun commentaire",
     },
-    c_play: { en: "▶️ Play", "zh-TW": "▶️ 播放", "zh-CN": "▶️ 播放", ja: "▶️ 再生", ko: "▶️ 재생", es: "▶️ Reproducir", "pt-BR": "▶️ Reproduzir", fr: "▶️ Lire" },
     c_api: { en: "⚙️ API", "zh-TW": "⚙️ API", "zh-CN": "⚙️ API", ja: "⚙️ API", ko: "⚙️ API", es: "⚙️ API", "pt-BR": "⚙️ API", fr: "⚙️ API" },
     c_err_parse: {
       en: "Parse Error",
@@ -605,6 +688,66 @@
       es: "Espera de estabilización UI (ms)",
       "pt-BR": "Espera de estabilização UI (ms)",
       fr: "Délai de stabilisation UI (ms)",
+    },
+    player_side_hint: {
+      en: "💡 When player is open, panel shifts to the left for easy adjustments",
+      "zh-TW": "💡 開啟播放器後，面板會自動移至左側以便即時調整",
+      "zh-CN": "💡 开启播放器后，面板会自动移至左侧以便实时调整",
+      ja: "💡 プレイヤーが開いているとき、パネルは左側に移動して調整しやすくします",
+      ko: "💡 플레이어가 열리면 패널이 왼쪽으로 이동하여 쉽게 조정할 수 있습니다",
+      es: "💡 Cuando el reproductor está abierto, el panel se desplaza a la izquierda para facilitar los ajustes",
+      "pt-BR": "💡 Quando o player estiver aberto, o painel se move para a esquerda para facilitar os ajustes",
+      fr: "💡 Lorsque le lecteur est ouvert, le panneau se déplace à gauche pour faciliter les réglages",
+    },
+    status_buffering: {
+      en: "BUFFERING",
+      "zh-TW": "緩衝中",
+      "zh-CN": "缓冲中",
+      ja: "バッファリング中",
+      ko: "버퍼링 중",
+      es: "ALMACENANDO EN BÚFER",
+      "pt-BR": "CARREGANDO",
+      fr: "MISE EN MÉMOIRE TAMPON",
+    },
+    status_initializing: {
+      en: "INITIALIZING",
+      "zh-TW": "初始化中",
+      "zh-CN": "初始化中",
+      ja: "初期化中",
+      ko: "초기화 중",
+      es: "INICIALIZANDO",
+      "pt-BR": "INICIALIZANDO",
+      fr: "INITIALISATION",
+    },
+    save_done: {
+      en: "✅ Saved!",
+      "zh-TW": "✅ 已儲存！",
+      "zh-CN": "✅ 已保存！",
+      ja: "✅ 保存しました！",
+      ko: "✅ 저장됨！",
+      es: "✅ ¡Guardado!",
+      "pt-BR": "✅ Salvo!",
+      fr: "✅ Enregistré !",
+    },
+    save_countdown: {
+      en: "(Refreshing in ${n}s)",
+      "zh-TW": "（${n}s 後刷新）",
+      "zh-CN": "（${n}s 后刷新）",
+      ja: "（${n}秒後にリフレッシュ）",
+      ko: "（${n}초 후 새로고침）",
+      es: "(Actualizando en ${n}s)",
+      "pt-BR": "(Atualizando em ${n}s)",
+      fr: "(Actualisation dans ${n}s)",
+    },
+    copy_url: {
+      en: "Copy URL",
+      "zh-TW": "複製連結",
+      "zh-CN": "复制链接",
+      ja: "URLをコピー",
+      ko: "URL 복사",
+      es: "Copiar URL",
+      "pt-BR": "Copiar URL",
+      fr: "Copier l'URL",
     },
   };
 
@@ -843,7 +986,7 @@
   };
   CleanupManager.addListener(window, "message", _crashDetectorHandler);
 
-  GM_registerMenuCommand("⚙️ Opening settings", createControlPanel);
+  GM_registerMenuCommand("⚙️ Open Settings", createControlPanel);
   GM_registerMenuCommand("🔑 Import API Key", () => showApiKeyPrompt());
 
   const style = document.createElement("style");
@@ -889,7 +1032,12 @@
             background: rgba(20,20,20,0.98);
             padding: 20px; border-radius: 12px; color: #eee; font-size: 14px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.8); border: 1px solid #444;
-            max-height: 85vh; overflow-y: auto; width: 320px;
+            max-height: 85vh; overflow-y: auto; width: 400px;
+            transition: left 0.25s ease, right 0.25s ease;
+        }
+        
+        body.yt-preview-playing #yt-master-control-panel {
+            right: auto; left: 20px;
         }
         .translated-text {
             background: #222; color: #ffd700; padding: 4px 8px; margin-top: 4px;
@@ -905,7 +1053,6 @@
         body.yt-panel-open .yt-preview-play-btn,
         body.yt-panel-open .yt-preview-comment-btn { opacity: 1 !important; }
 
-        
         body.yt-preview-playing ytd-app {
             pointer-events: none !important; 
             user-select: none !important;
@@ -914,7 +1061,6 @@
             animation-play-state: paused !important; 
         }
 
-        
         #yt-transition-overlay {
             position: fixed; inset: 0; z-index: 2147483649;
             background: #000;
@@ -925,7 +1071,6 @@
         }
         #yt-transition-overlay.fade-out { opacity: 0; }
 
-       
         @keyframes ytScanBar {
             0%   { transform: translateY(0); opacity: 0; }
             8%   { opacity: 1; }
@@ -945,7 +1090,6 @@
             50%       { opacity: 0.25; }
         }
 
-        
         @keyframes ytBurstRing {
             0%   { transform: scale(0.5); opacity: 0; }
             25%  { opacity: 1; }
@@ -962,7 +1106,6 @@
             50%       { transform: scale(1.08); }
         }
 
-        
         @keyframes ytGlassArc {
             to { transform: rotate(360deg); }
         }
@@ -1004,6 +1147,64 @@
             box-shadow: 0 1px 4px rgba(255,68,68,0.5);
             animation: ytNewBadgePulse 1.6s ease-in-out infinite;
             pointer-events: none; user-select: none;
+        }
+
+        @keyframes ytDropdownIn {
+            from { opacity: 0; transform: translateX(6px) scale(0.96); }
+            to   { opacity: 1; transform: translateX(0)   scale(1);    }
+        }
+        #yt-ctrl-dropdown {
+            
+            background: rgba(18, 18, 18, 0.96);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px;
+            padding: 6px 0;
+            min-width: 110px;
+            box-shadow: 0 8px 28px rgba(0,0,0,0.75);
+            z-index: 2147483649;
+            pointer-events: auto;
+            animation: ytDropdownIn 0.15s cubic-bezier(.25,.8,.25,1) forwards;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+        #yt-ctrl-dropdown .yt-dd-item {
+            display: flex; align-items: center;
+            padding: 7px 16px;
+            font-size: 13px; font-weight: 500;
+            color: rgba(255,255,255,0.82);
+            cursor: pointer;
+            gap: 8px;
+            transition: background 0.1s, color 0.1s;
+            white-space: nowrap;
+            user-select: none;
+        }
+        #yt-ctrl-dropdown .yt-dd-item:hover {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+        }
+        #yt-ctrl-dropdown .yt-dd-item.yt-dd-active {
+            color: #3ea6ff;
+            font-weight: 700;
+        }
+        #yt-ctrl-dropdown .yt-dd-item.yt-dd-active::before {
+            content: "✔";
+            font-size: 11px;
+            margin-right: -2px;
+        }
+        #yt-ctrl-dropdown .yt-dd-label {
+            padding: 5px 16px 4px;
+            font-size: 10px; font-weight: 700;
+            color: rgba(255,255,255,0.38);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        tp-yt-paper-toast.yt-notification-action-renderer,
+        #toast.yt-notification-action-renderer {
+            display: none !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
         }
     `;
   document.head.appendChild(style);
@@ -1117,55 +1318,58 @@
     container.classList.add("yt-preview-container");
     container.style.position = "relative";
 
-    const playBtn = document.createElement("div");
-    playBtn.className = "yt-preview-play-btn";
-    playBtn.innerHTML = "▶";
-    const commentBtn = document.createElement("div");
-    commentBtn.className = "yt-preview-comment-btn";
-    commentBtn.innerHTML = "💬";
+    const showPlay    = getCfg("ytShowPlayBtn");
+    const showComment = getCfg("ytShowCommentBtn");
 
-    const size = getCfg("ytThumbButtonSize");
-    const layout = getCfg("ytButtonLayout");
-    const spacing = getCfg("ytButtonSpacing");
-
-    if (layout === "horizontal") {
-      playBtn.style.top = "8px";
-      playBtn.style.left = "8px";
-      commentBtn.style.top = "8px";
-      commentBtn.style.left = 8 + size + spacing + "px";
-    } else {
-      commentBtn.style.bottom = "8px";
-      commentBtn.style.right = "8px";
-      playBtn.style.bottom = 8 + size + spacing + "px";
-      playBtn.style.right = "8px";
+    const playBtn = showPlay ? document.createElement("div") : null;
+    if (playBtn) {
+      playBtn.className = "yt-preview-play-btn";
+      playBtn.innerHTML = "▶";
+    }
+    const commentBtn = showComment ? document.createElement("div") : null;
+    if (commentBtn) {
+      commentBtn.className = "yt-preview-comment-btn";
+      commentBtn.innerHTML = "💬";
     }
 
-    playBtn.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const liveAnchor = container._sfxAnchor;
-      const clickVid = getID(liveAnchor?.href);
-      const clickShorts = isShorts(liveAnchor?.href);
-      if (!clickVid) return;
+    const size    = getCfg("ytThumbButtonSize");
+    const spacing = getCfg("ytButtonSpacing");
 
-      if (persistentOverlay) {
-        showPlayer(persistentOverlay, clickVid, clickShorts);
-      } else {
-        persistentOverlay = createPlayer(clickVid, clickShorts);
-        showPlayer(persistentOverlay, clickVid, clickShorts);
-      }
-    };
+    let btnIndex = 0;
+    const nextLeft = () => 8 + btnIndex++ * (size + spacing);
 
-    commentBtn.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const liveAnchor = container._sfxAnchor;
-      const vid = getID(liveAnchor?.href);
-      if (vid) showComments(vid, isShorts(liveAnchor?.href));
-    };
+    if (playBtn)    { playBtn.style.top    = "8px"; playBtn.style.left    = nextLeft() + "px"; }
+    if (commentBtn) { commentBtn.style.top = "8px"; commentBtn.style.left = nextLeft() + "px"; }
 
-    container.appendChild(playBtn);
-    container.appendChild(commentBtn);
+    if (playBtn) {
+      playBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const liveAnchor = container._sfxAnchor;
+        const clickVid = getID(liveAnchor?.href);
+        const clickShorts = isShorts(liveAnchor?.href);
+        if (!clickVid) return;
+        if (persistentOverlay) {
+          showPlayer(persistentOverlay, clickVid, clickShorts);
+        } else {
+          persistentOverlay = createPlayer(clickVid, clickShorts);
+          showPlayer(persistentOverlay, clickVid, clickShorts);
+        }
+      };
+      container.appendChild(playBtn);
+    }
+
+    if (commentBtn) {
+      commentBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const liveAnchor = container._sfxAnchor;
+        const vid = getID(liveAnchor?.href);
+        if (vid) showComments(vid, isShorts(liveAnchor?.href));
+      };
+      container.appendChild(commentBtn);
+    }
+
     const vid = getID(anchor.href);
     if (vid) container.dataset.lastVid = vid;
   }
@@ -1294,7 +1498,7 @@
         animation: ytScanBlink 1.4s ease-in-out infinite;
         position:relative; z-index:2;
       `;
-      label.textContent = "BUFFERING";
+      label.textContent = txt("status_buffering");
       ov.appendChild(label);
 
     } else if (style === "burst") {
@@ -1440,7 +1644,7 @@
         position:relative; z-index:2;
         will-change: opacity;
       `;
-      label.textContent = "INITIALIZING";
+      label.textContent = txt("status_initializing");
       ov.appendChild(label);
     }
 
@@ -1469,7 +1673,7 @@
     if (!overlay || !videoId) return;
 
     document.body.classList.add("yt-preview-playing");
-    observer.disconnect();
+    _pauseObserver();
     document.querySelectorAll("video").forEach(v => {
       if (v && typeof v.pause === 'function' && !v.closest('#yt-preview-popup')) {
         v.pause();
@@ -1488,7 +1692,6 @@
 
     const iframe = overlay.querySelector("iframe");
     const container = overlay.querySelector("div");
-    const controls = overlay.querySelector("#yt-p-controls");
 
     overlay._isShorts = shorts;
     if (container) applySize(container, shorts);
@@ -1499,10 +1702,12 @@
       const currentSrc = iframe.src;
 
       if (currentSrc === "about:blank" || !currentSrc.includes(videoId)) {
-        let transHandle = null;
+        overlay._transHandle = null;
         if (transEnabled) {
           const transStyle = getCfg("ytTransitionStyle") || "scan";
-          transHandle = showTransitionOverlay(transStyle, () => {});
+          overlay._transHandle = showTransitionOverlay(transStyle, () => {
+            overlay._transHandle = null;
+          });
         }
 
         iframe.src = targetUrl;
@@ -1521,6 +1726,10 @@
             if (iframe.contentWindow) {
               iframe.contentWindow.postMessage(
                 JSON.stringify({ type: "GET_QUALITY" }),
+                "*",
+              );
+              iframe.contentWindow.postMessage(
+                JSON.stringify({ type: "SET_QUALITY", value: "auto" }),
                 "*",
               );
             }
@@ -1547,8 +1756,13 @@
   function hidePlayer(overlay) {
     if (!overlay) return;
 
+    if (overlay._transHandle) {
+      try { overlay._transHandle.dismiss(false); } catch (_) {}
+      overlay._transHandle = null;
+    }
+
     document.body.classList.remove("yt-preview-playing");
-    observer.observe(document.body, { childList: true, subtree: true });
+    _resumeObserver();
 
     overlay._watchdogAbort?.abort();
     const iframe = overlay.querySelector("iframe");
@@ -1616,7 +1830,11 @@
     }, 2000);
     CleanupManager.addTimer(timer);
 
-    wSignal.addEventListener('abort', () => clearInterval(timer), { once: true });
+    wSignal.addEventListener('abort', () => {
+      clearInterval(timer);
+      const idx = CleanupManager.timers.indexOf(timer);
+      if (idx !== -1) CleanupManager.timers.splice(idx, 1);
+    }, { once: true });
 
     return watchdogAbort;
   }
@@ -1711,39 +1929,93 @@
             <div id="qualityBtn" title="${txt("quality")}" style="${btnStyle}">HD</div>
         `;
 
+    const dropdown = document.createElement("div");
+    dropdown.id = "yt-ctrl-dropdown";
+    dropdown.style.display = "none";
+    container.appendChild(dropdown);
+
     const sendToIframe = (type, value) => {
       if (iframe.contentWindow) {
-        try {
-          iframe.contentWindow.postMessage(
-            JSON.stringify({ type, value }),
-            "*",
-          );
-        } catch (e) {}
+        iframe.contentWindow.postMessage(JSON.stringify({ type, value }), "*");
       }
     };
 
+    let _ddCloseHandler = null;
+
+    const showDropdown = (anchorBtn, label, items, onSelect) => {
+      if (dropdown.style.display !== "none" && dropdown._anchor === anchorBtn) {
+        dropdown.style.display = "none";
+        dropdown._anchor = null;
+        return;
+      }
+      dropdown._anchor = anchorBtn;
+
+      dropdown.innerHTML = "";
+      if (label) {
+        const lbl = document.createElement("div");
+        lbl.className = "yt-dd-label";
+        lbl.textContent = label;
+        dropdown.appendChild(lbl);
+      }
+      items.forEach(({ text, value, active }) => {
+        const item = document.createElement("div");
+        item.className = "yt-dd-item" + (active ? " yt-dd-active" : "");
+        item.textContent = text;
+        item.onclick = (ev) => {
+          ev.stopPropagation();
+          dropdown.style.display = "none";
+          dropdown._anchor = null;
+          onSelect(value);
+        };
+        dropdown.appendChild(item);
+      });
+
+      dropdown.style.cssText = "display:block; position:fixed; z-index:2147483649;";
+      const btnRect = anchorBtn.getBoundingClientRect();
+      const ddW = dropdown.offsetWidth  || 130;
+      const ddH = dropdown.offsetHeight || 40;
+      const gap = 8;
+      let left = btnRect.left - ddW - gap;
+      let top  = btnRect.top + btnRect.height / 2 - ddH / 2;
+      top  = Math.max(8, Math.min(top, window.innerHeight - ddH - 8));
+      left = Math.max(8, left);
+      dropdown.style.left = left + "px";
+      dropdown.style.top  = top  + "px";
+
+      if (_ddCloseHandler) document.removeEventListener("click", _ddCloseHandler, true);
+      _ddCloseHandler = (ev) => {
+        if (!dropdown.contains(ev.target) && ev.target !== anchorBtn) {
+          dropdown.style.display = "none";
+          dropdown._anchor = null;
+          document.removeEventListener("click", _ddCloseHandler, true);
+          _ddCloseHandler = null;
+        }
+      };
+      setTimeout(() => document.addEventListener("click", _ddCloseHandler, true), 0);
+    };
+
+    const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
     let currentSpeed = 1;
     const speedBtn = controls.querySelector("#speedBtn");
     speedBtn.onclick = (e) => {
       e.stopPropagation();
-      const speeds = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-      const idx = speeds.indexOf(currentSpeed);
-      currentSpeed = speeds[(idx + 1) % speeds.length];
-      sendToIframe("SET_SPEED", currentSpeed);
-      speedBtn.textContent = currentSpeed + "x";
+      showDropdown(
+        speedBtn,
+        txt("speed"),
+        SPEEDS.map(s => ({ text: s === 1 ? `${s}x  (${txt("speed").replace(/速|Speed|速度|속도|Vitesse|Velocidade|Velocidad/i,"").trim()} Normal)`.replace(/\s+/," ").trim() : s + "x", value: s, active: s === currentSpeed })),
+        (val) => {
+          currentSpeed = val;
+          sendToIframe("SET_SPEED", val);
+          speedBtn.textContent = val + "x";
+        }
+      );
     };
 
     let availableLevels = [];
     const qualityBtn = controls.querySelector("#qualityBtn");
     const qMap = {
-      hd2160: "4K",
-      hd1440: "2K",
-      hd1080: "1080",
-      hd720: "720",
-      large: "480",
-      medium: "360",
-      small: "240",
-      tiny: "144",
+      hd2160: "4K", hd1440: "2K", hd1080: "1080p",
+      hd720: "720p", large: "480p", medium: "360p", small: "240p", tiny: "144p", auto: "Auto",
     };
 
     if (messageListener) {
@@ -1755,15 +2027,15 @@
     }
 
     messageListener = (e) => {
-      const data = e.data;
       try {
-        const jsonData = JSON.parse(data);
+        const jsonData = JSON.parse(e.data);
         if (jsonData.type === "QUALITY_LIST") {
           availableLevels = jsonData.levels;
           const cur = jsonData.current;
           qualityBtn.textContent = qMap[cur] || "HD";
+          qualityBtn.dataset.current = cur;
         }
-      } catch (err) {}
+      } catch (_) {}
     };
     CleanupManager.addListener(window, "message", messageListener);
 
@@ -1771,27 +2043,50 @@
       e.stopPropagation();
       if (availableLevels.length === 0) {
         sendToIframe("GET_QUALITY");
+        qualityBtn.textContent = "…";
+        const waitQuality = (ev) => {
+          try {
+            const d = JSON.parse(ev.data);
+            if (d.type === "QUALITY_LIST") {
+              window.removeEventListener("message", waitQuality);
+              qualityBtn.click();
+            }
+          } catch (_) {}
+        };
+        window.addEventListener("message", waitQuality);
+        setTimeout(() => window.removeEventListener("message", waitQuality), 4000);
         return;
       }
-      let idx = availableLevels.indexOf(
-        qualityBtn.dataset.current || availableLevels[0],
+      const cur = qualityBtn.dataset.current || availableLevels[0];
+      showDropdown(
+        qualityBtn,
+        txt("quality"),
+        availableLevels.map(lv => ({
+          text: qMap[lv] || lv.replace("hd","").toUpperCase() + "p",
+          value: lv,
+          active: lv === cur,
+        })),
+        (val) => {
+          sendToIframe("SET_QUALITY", val);
+          qualityBtn.dataset.current = val;
+          qualityBtn.textContent = qMap[val] || val.replace("hd","").toUpperCase();
+        }
       );
-      if (idx === -1) idx = 0;
-      idx = (idx + 1) % availableLevels.length;
-      const target = availableLevels[idx];
-
-      sendToIframe("SET_QUALITY", target);
-      qualityBtn.dataset.current = target;
-      qualityBtn.textContent =
-        qMap[target] || target.replace("hd", "").toUpperCase();
     };
 
     controls.querySelector("#resizeBtn").onclick = (e) => {
       e.stopPropagation();
-      currentSizeIndex = (currentSizeIndex + 1) % SIZE_OPTIONS.length;
-      GM_setValue("ytPlayerSizeIndex", currentSizeIndex);
-      applySize(container, overlay._isShorts ?? false);
-      e.target.title = `${txt("resize")}: ${SIZE_OPTIONS[currentSizeIndex].name}`;
+      showDropdown(
+        controls.querySelector("#resizeBtn"),
+        txt("resize"),
+        SIZE_OPTIONS.map((opt, i) => ({ text: opt.name, value: i, active: i === currentSizeIndex })),
+        (val) => {
+          currentSizeIndex = val;
+          GM_setValue("ytPlayerSizeIndex", currentSizeIndex);
+          applySize(container, overlay._isShorts ?? false);
+          controls.querySelector("#resizeBtn").title = `${txt("resize")}: ${SIZE_OPTIONS[currentSizeIndex].name}`;
+        }
+      );
     };
 
     controls.style.opacity = "0";
@@ -1799,7 +2094,7 @@
     container.addEventListener("mouseleave", () => { controls.style.opacity = "0"; });
     controls.addEventListener("mouseenter",  () => { controls.style.opacity = "1"; });
 
-    const closeBtn = overlay.querySelector("#closeBtn");
+    const closeBtn = controls.querySelector("#closeBtn");
     if (closeBtn) {
       closeBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -1869,87 +2164,126 @@
 
     document.body.classList.add("yt-panel-open");
 
+    const RESET_BTN = (k) =>
+      `<button type="button" data-reset="${k}" title="Reset" style="
+        flex-shrink:0;background:none;border:1px solid #555;color:#888;
+        border-radius:3px;padding:0 5px;font-size:10px;cursor:pointer;
+        line-height:1.6;margin-left:4px;">↺</button>`;
+
     const mkRange = (lbl, k, min, max) => `
-            <label>${lbl}
-                <div>
-                    <input type="range" id="${k}" min="${min}" max="${max}"
-                           value="${getCfg(k)}" step="${max <= 1 ? 0.1 : 1}">
-                    <span id="d_${k}" style="display:inline-block;width:30px;text-align:right;">
-                        ${getCfg(k)}
-                    </span>
-                </div>
-            </label>`;
+      <div class="yt-cp-row">
+        <span class="yt-cp-lbl">${lbl}</span>
+        <div class="yt-cp-ctrl">
+          <input type="range" id="${k}" min="${min}" max="${max}"
+                 value="${getCfg(k)}" step="${max <= 1 ? 0.1 : 1}"
+                 style="flex:1;min-width:0;">
+          <span id="d_${k}" style="width:34px;text-align:right;flex-shrink:0;font-size:12px;">
+            ${getCfg(k)}
+          </span>
+          ${RESET_BTN(k)}
+        </div>
+      </div>`;
+
     const mkCheck = (lbl, k) => `
-            <label style="justify-content:flex-start;gap:10px;">
-                <input type="checkbox" id="${k}" ${getCfg(k) ? "checked" : ""}>
-                ${lbl}
-            </label>`;
+      <div class="yt-cp-row" style="align-items:center;">
+        <span class="yt-cp-lbl">${lbl}</span>
+        <div class="yt-cp-ctrl" style="justify-content:flex-start;gap:8px;">
+          <input type="checkbox" id="${k}" ${getCfg(k) ? "checked" : ""}>
+          ${RESET_BTN(k)}
+        </div>
+      </div>`;
+
+    const mkSelect = (lbl, k, opts) => `
+      <div class="yt-cp-row" style="align-items:center;">
+        <span class="yt-cp-lbl">${lbl}</span>
+        <div class="yt-cp-ctrl" style="justify-content:flex-start;gap:6px;">
+          <select id="${k}" style="background:#333;color:white;border:1px solid #555;border-radius:4px;padding:2px 6px;flex:1;min-width:0;">
+            ${opts}
+          </select>
+          ${RESET_BTN(k)}
+        </div>
+      </div>`;
 
     p.innerHTML = `
-            <h3 style="margin:0 0 12px;color:#3ea6ff;border-bottom:1px solid #444;padding-bottom:10px;">
-                ${txt("panel_title")}
-            </h3>
+      <style>
+        #yt-master-control-panel .yt-cp-section {
+          font-size:11px;color:#888;margin:14px 0 8px;
+          padding-top:10px;border-top:1px solid #383838;
+          letter-spacing:0.04em;text-transform:uppercase;
+        }
+        #yt-master-control-panel .yt-cp-row {
+          display:grid;grid-template-columns:1fr 1fr;
+          gap:6px;align-items:center;margin-bottom:7px;
+        }
+        #yt-master-control-panel .yt-cp-lbl {
+          font-size:12px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+        }
+        #yt-master-control-panel .yt-cp-ctrl {
+          display:flex;align-items:center;gap:4px;
+        }
+        #yt-master-control-panel button[data-reset]:hover { color:#fff;border-color:#aaa; }
+      </style>
 
-            <label style="margin-bottom:10px; display:block;">🌐 Language
-                <select id="ytLanguage" style="background:#333;color:white;border:none;border-radius:4px;margin-left:10px;padding:2px 4px;">
-                    ${SUPPORTED_LANGS.map(code =>
-                      `<option value="${code}" ${getCfg("ytLanguage") === code ? "selected" : ""}>${LANG_FLAGS[code] || "🌐"} ${LANG_LABELS[code] || code}</option>`
-                    ).join("\n                    ")}
-                </select>
-            </label>
+      <h3 style="margin:0 0 12px;color:#3ea6ff;border-bottom:1px solid #444;padding-bottom:10px;">
+        ${txt("panel_title")}
+      </h3>
 
-            <div style="margin-bottom:10px;font-size:12px;color:#aaa;">${txt("btn_settings")}</div>
-            ${mkRange(txt("size"), "ytThumbButtonSize", 16, 50)}
-            ${mkRange(txt("font"), "ytThumbFontSize", 10, 30)}
-            ${mkRange(txt("opacity"), "ytThumbOpacity", 0.1, 1)}
-            <div style="font-size:11px;color:#666;margin-bottom:8px;">${txt("refresh_note")}</div>
-            ${mkRange(txt("spacing"), "ytButtonSpacing", 0, 50)}
-            <label>${txt("layout")}
-                <select id="ytButtonLayout" style="background:#333;color:white;border:none;border-radius:4px;">
-                    <option value="horizontal" ${getCfg("ytButtonLayout") === "horizontal" ? "selected" : ""}>${txt("horizontal")}</option>
-                    <option value="vertical" ${getCfg("ytButtonLayout") === "vertical" ? "selected" : ""}>${txt("vertical")}</option>
-                </select>
-            </label>
-            ${mkCheck(txt("always_visible"), "ytButtonsAlwaysVisible")}
-            <div style="margin:15px 0 10px;font-size:12px;color:#aaa;border-top:1px solid #444;padding-top:10px;">
-                ${txt("player_settings")}
-            </div>
-            ${mkRange(txt("bg_density"), "ytOverlayOpacity", 0.1, 1)}
-            <div style="margin:10px 0 5px;font-size:12px;color:#aaa;">${txt("icon_pos")}</div>
-            ${mkRange(txt("v_pos"), "ytPopupButtonOffset", 0, 200)}
-            ${mkRange(txt("icon_size"), "ytPopupSymbolSize", 10, 50)}
-            ${mkRange(txt("icon_opacity"), "ytPopupSymbolOpacity", 0.1, 1)}
+      <!-- 語言 -->
+      ${mkSelect("🌐 Language", "ytLanguage",
+          SUPPORTED_LANGS.map(code =>
+            `<option value="${code}" ${getCfg("ytLanguage") === code ? "selected" : ""}>${LANG_FLAGS[code] || "🌐"} ${LANG_LABELS[code] || code}</option>`
+          ).join("")
+      )}
 
-            <div style="margin:15px 0 10px;font-size:12px;color:#aaa;border-top:1px solid #444;padding-top:10px;">
-                🎬 ${txt("transition_anim")}
-            </div>
-            ${mkCheck(txt("transition_anim"), "ytTransitionEnabled")}
-            <label id="yt-trans-style-row" style="justify-content:flex-start;gap:10px;${getCfg("ytTransitionEnabled") ? "" : "opacity:0.4;pointer-events:none;"}">
-                ${txt("transition_style")}
-                <span style="display:inline-block;background:rgba(255,180,0,0.18);color:#ffb400;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;border:1px solid rgba(255,180,0,0.35);vertical-align:middle;letter-spacing:0.04em;pointer-events:none;user-select:none;">⚠️ Experimental</span>
-                <select id="ytTransitionStyle" style="background:#333;color:white;border:none;border-radius:4px;padding:2px 4px;margin-left:6px;">
-                    <option value="scan"  ${getCfg("ytTransitionStyle") === "scan"  ? "selected" : ""}>🔵 ${txt("ts_scan")}</option>
-                    <option value="burst" ${getCfg("ytTransitionStyle") === "burst" ? "selected" : ""}>🔴 ${txt("ts_burst")}</option>
-                    <option value="glass" ${getCfg("ytTransitionStyle") === "glass" ? "selected" : ""}>🟣 ${txt("ts_glass")}</option>
-                    <option value="mono"  ${getCfg("ytTransitionStyle") === "mono"  ? "selected" : ""}>⚪ ${txt("ts_mono")}</option>
-                </select>
-            </label>
-            <div id="yt-trans-delay-row" style="${getCfg("ytTransitionEnabled") ? "" : "opacity:0.4;pointer-events:none;"}">
-                ${mkRange(txt("transition_delay"), "ytTransitionDelay", 400, 1500)}
-            </div>
+      <!-- 按鈕設定 -->
+      <div class="yt-cp-section">${txt("btn_settings")}</div>
+      ${mkRange(txt("size"),    "ytThumbButtonSize", 16, 50)}
+      ${mkRange(txt("font"),    "ytThumbFontSize",   10, 30)}
+      ${mkRange(txt("opacity"), "ytThumbOpacity",    0.1, 1)}
+      <div style="font-size:10px;color:#555;margin:-4px 0 8px;">${txt("refresh_note")}</div>
+      ${mkRange(txt("spacing"), "ytButtonSpacing", 0, 50)}
+      ${mkCheck(txt("always_visible"),  "ytButtonsAlwaysVisible")}
+      ${mkCheck(txt("show_play_btn"),   "ytShowPlayBtn")}
+      ${mkCheck(txt("show_comment_btn"),"ytShowCommentBtn")}
 
-            <div style="text-align:right;margin-top:15px;">
-                <button id="yt-reset" style="background:#555;color:white;border:none;padding:6px 12px;border-radius:4px;margin-right:8px;cursor:pointer;">
-                    ${txt("reset")}
-                </button>
-                <button id="yt-save" style="background:#3ea6ff;color:black;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-weight:bold;">
-                    ${txt("save")}
-                </button>
-            </div>
-            <button id="yt-close" style="position:absolute;top:10px;right:10px;background:none;border:none;color:#aaa;font-size:18px;cursor:pointer;">
-                ✖
-            </button>
-        `;
+      <!-- 播放器設定 -->
+      <div class="yt-cp-section">${txt("player_settings")}</div>
+      <div style="font-size:11px;color:#666;margin-bottom:8px;">${txt("player_side_hint")}</div>
+      ${mkRange(txt("bg_density"),   "ytOverlayOpacity",     0.1, 1)}
+      ${mkRange(txt("v_pos"),        "ytPopupButtonOffset",  0, 200)}
+      ${mkRange(txt("icon_size"),    "ytPopupSymbolSize",    10, 50)}
+      ${mkRange(txt("icon_opacity"), "ytPopupSymbolOpacity", 0.1, 1)}
+
+      <!-- 過渡動畫 -->
+      <div class="yt-cp-section">🎬 ${txt("transition_anim")}</div>
+      ${mkCheck(txt("transition_anim"), "ytTransitionEnabled")}
+      <div id="yt-trans-style-row" style="${getCfg("ytTransitionEnabled") ? "" : "opacity:0.4;pointer-events:none;"}">
+        ${mkSelect(`${txt("transition_style")}
+          <span style="background:rgba(255,180,0,0.18);color:#ffb400;font-size:9px;font-weight:700;
+            padding:1px 5px;border-radius:8px;border:1px solid rgba(255,180,0,0.35);
+            vertical-align:middle;letter-spacing:0.04em;">⚠️ Exp</span>`,
+          "ytTransitionStyle", `
+          <option value="scan"  ${getCfg("ytTransitionStyle") === "scan"  ? "selected" : ""}>🔵 ${txt("ts_scan")}</option>
+          <option value="burst" ${getCfg("ytTransitionStyle") === "burst" ? "selected" : ""}>🔴 ${txt("ts_burst")}</option>
+          <option value="glass" ${getCfg("ytTransitionStyle") === "glass" ? "selected" : ""}>🟣 ${txt("ts_glass")}</option>
+          <option value="mono"  ${getCfg("ytTransitionStyle") === "mono"  ? "selected" : ""}>⚪ ${txt("ts_mono")}</option>
+        `)}
+      </div>
+      <div id="yt-trans-delay-row" style="${getCfg("ytTransitionEnabled") ? "" : "opacity:0.4;pointer-events:none;"}">
+        ${mkRange(txt("transition_delay"), "ytTransitionDelay", 400, 1500)}
+      </div>
+
+      <!-- 底部按鈕 -->
+      <div style="text-align:right;margin-top:16px;padding-top:12px;border-top:1px solid #383838;">
+        <button id="yt-reset" style="background:#555;color:white;border:none;padding:6px 12px;border-radius:4px;margin-right:8px;cursor:pointer;">
+          ${txt("reset")}
+        </button>
+        <button id="yt-save" style="background:#3ea6ff;color:black;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-weight:bold;">
+          ${txt("save")}
+        </button>
+      </div>
+      <button id="yt-close" style="position:absolute;top:10px;right:10px;background:none;border:none;color:#aaa;font-size:18px;cursor:pointer;">✖</button>
+    `;
     document.body.appendChild(p);
     _applyNewBadges(p);
 
@@ -1957,46 +2291,52 @@
       const d = document.getElementById("d_" + k);
       if (d) d.textContent = v;
 
-      if (
-        ["ytThumbButtonSize", "ytThumbFontSize", "ytThumbOpacity"].includes(k)
-      ) {
-        document
-          .querySelectorAll(".yt-preview-play-btn, .yt-preview-comment-btn")
-          .forEach((btn) => {
-            if (k === "ytThumbButtonSize") {
-              btn.style.width = v + "px";
-              btn.style.height = v + "px";
-            }
-            if (k === "ytThumbFontSize") btn.style.fontSize = v + "px";
-            if (k === "ytThumbOpacity")
-              btn.style.backgroundColor = `rgba(0,0,0,${v})`;
-          });
+      if (["ytThumbButtonSize", "ytThumbFontSize", "ytThumbOpacity"].includes(k)) {
+        document.querySelectorAll(".yt-preview-play-btn, .yt-preview-comment-btn").forEach(btn => {
+          if (k === "ytThumbButtonSize") { btn.style.width = v + "px"; btn.style.height = v + "px"; }
+          if (k === "ytThumbFontSize")   btn.style.fontSize = v + "px";
+          if (k === "ytThumbOpacity")    btn.style.backgroundColor = `rgba(0,0,0,${v})`;
+        });
       }
 
       const popup = document.getElementById("yt-preview-popup");
       if (popup) {
-        if (k === "ytOverlayOpacity")
-          popup.style.background = `rgba(0,0,0,${v})`;
+        if (k === "ytOverlayOpacity") popup.style.background = `rgba(0,0,0,${v})`;
         const ctrl = popup.querySelector("#yt-p-controls");
         if (ctrl) {
-          if (k === "ytPopupButtonOffset") {
-            const topPos = Math.max(10, v - 30);
-            ctrl.style.top = topPos + "px";
-          }
-          if (k === "ytPopupSymbolSize") {
-            ctrl
-              .querySelectorAll("div")
-              .forEach((d) => (d.style.fontSize = v + "px"));
-          }
-          if (k === "ytPopupSymbolOpacity") {
-            ctrl.querySelectorAll("div").forEach((d) => (d.style.opacity = v));
-          }
+          if (k === "ytPopupButtonOffset") ctrl.style.top = Math.max(10, v - 30) + "px";
+          if (k === "ytPopupSymbolSize")   ctrl.querySelectorAll("div").forEach(d => d.style.fontSize   = v + "px");
+          if (k === "ytPopupSymbolOpacity") ctrl.querySelectorAll("div").forEach(d => d.style.opacity = v);
         }
+      }
+
+      const mini = document.getElementById("yt-mini-player");
+      if (mini) {
+        if (k === "ytOverlayOpacity") mini.style.background = `rgba(0,0,0,${v})`;
       }
     };
 
-    p.querySelectorAll("input[type=range]").forEach((i) => {
+    p.querySelectorAll("input[type=range]").forEach(i => {
       i.addEventListener("input", () => applyRealTime(i.id, i.value));
+    });
+
+    p.querySelectorAll("button[data-reset]").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const k = btn.dataset.reset;
+        const def = DEFAULTS[k];
+        if (def === undefined) return;
+        const el = document.getElementById(k);
+        if (!el) return;
+        if (el.type === "checkbox") {
+          el.checked = def;
+        } else if (el.type === "range") {
+          el.value = def;
+          applyRealTime(k, def);
+        } else {
+          el.value = def;
+        }
+      });
     });
 
     const transCheck = document.getElementById("ytTransitionEnabled");
@@ -2057,7 +2397,7 @@
       }
     };
 
-    p.querySelector("#yt-save").onclick = (e) => {
+    p.querySelector("#yt-save").onclick = async (e) => {
       e.stopPropagation();
 
       const saveBtn = p.querySelector("#yt-save");
@@ -2065,26 +2405,40 @@
       saveBtn.textContent = "⏳ ...";
       saveBtn.style.opacity = "0.7";
 
+      const writes = [];
       for (let k in DEFAULTS) {
         if (["yt_comment_api_key", "ytPlayerSizeIndex", "ytLanguage"].includes(k)) continue;
         const el = document.getElementById(k);
         if (el) {
-          GM_setValue(
-            k,
-            el.type === "checkbox" ?
-            el.checked :
-            el.type === "range" ?
-            parseFloat(el.value) :
-            el.value,
-          );
+          const val = el.type === "checkbox" ? el.checked
+                    : el.type === "range"    ? parseFloat(el.value)
+                    : el.value;
+          writes.push(Promise.resolve(GM_setValue(k, val)));
         }
       }
       const tsEl = document.getElementById("ytTransitionStyle");
-      if (tsEl) GM_setValue("ytTransitionStyle", tsEl.value);
+      if (tsEl) writes.push(Promise.resolve(GM_setValue("ytTransitionStyle", tsEl.value)));
 
-      setTimeout(() => {
-        window.location.reload();
-      }, 600);
+      await Promise.all(writes);
+
+      saveBtn.textContent = txt("save_done");
+      saveBtn.style.background = "#22bb55";
+      saveBtn.style.opacity = "1";
+
+      let countdown = 2;
+      const countEl = document.createElement("span");
+      countEl.style.cssText = "font-size:11px;color:#aaa;margin-left:8px;";
+      countEl.textContent = txt("save_countdown").replace("${n}", countdown);
+      saveBtn.after(countEl);
+
+      const tick = setInterval(() => {
+        countdown--;
+        countEl.textContent = txt("save_countdown").replace("${n}", countdown);
+        if (countdown <= 0) {
+          clearInterval(tick);
+          window.location.reload();
+        }
+      }, 1000);
     };
   }
 
@@ -2092,7 +2446,6 @@
 
   function showMiniPlayer(videoId) {
     const MINI_ID = "yt-mini-player";
-    const HANDLE_H = 28;
 
     const existing = document.getElementById(MINI_ID);
     if (existing) {
@@ -2147,7 +2500,7 @@
     `;
 
     const copyBtn = document.createElement("div");
-    copyBtn.title = "Copy URL";
+    copyBtn.title = txt("copy_url");
     copyBtn.style.cssText = btnBaseCSS + "display:flex; align-items:center; justify-content:center; width:20px; height:20px;";
     copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
       fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2197,6 +2550,7 @@
     };
 
     rightBtns.appendChild(copyBtn);
+
     rightBtns.appendChild(closeBtn);
 
     handle.appendChild(handleLeft);
@@ -2209,6 +2563,11 @@
         opacity: 0; transition: opacity 0.4s ease;
     `;
     iframe.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture; accelerometer; gyroscope; clipboard-write";
+
+    iframe.src = buildEmbedUrl(videoId, false);
+    iframe.onload = () => {
+      iframe.style.opacity = "1";
+    };
 
     mini.appendChild(iframe);
     mini.appendChild(handle);
@@ -2536,11 +2895,23 @@
       list.forEach((c) => {
         const div = document.createElement("div");
         div.style.cssText = "border-bottom:1px solid #333; padding:10px 0;";
-        div.innerHTML = `
-                  <div style="color:#aaa;font-size:12px;margin-bottom:4px;">${c.author}</div>
-                  <div class="c_text" style="line-height:1.4;white-space:pre-wrap;">${cleanHTML(c.text)}</div>
-                  <div style="color:#3ea6ff;font-size:12px;margin-top:4px;">👍 ${c.likeCount}</div>
-              `;
+
+        const authorDiv = document.createElement("div");
+        authorDiv.style.cssText = "color:#aaa;font-size:12px;margin-bottom:4px;";
+        authorDiv.textContent = c.author;
+
+        const textDiv = document.createElement("div");
+        textDiv.className = "c_text";
+        textDiv.style.cssText = "line-height:1.4;white-space:pre-wrap;";
+        textDiv.textContent = cleanHTML(c.text);
+
+        const likeDiv = document.createElement("div");
+        likeDiv.style.cssText = "color:#3ea6ff;font-size:12px;margin-top:4px;";
+        likeDiv.textContent = `👍 ${c.likeCount}`;
+
+        div.appendChild(authorDiv);
+        div.appendChild(textDiv);
+        div.appendChild(likeDiv);
         content.appendChild(div);
       });
       const lang = document.getElementById("c_lang").value;
@@ -2559,7 +2930,7 @@
             try {
               const json = JSON.parse(res.responseText);
               if (json.error) {
-                cb([], json.error);
+                cb([], { message: json.error?.message || txt("c_err_net") });
                 return;
               }
               const items =
@@ -2665,6 +3036,8 @@
       }
       return;
     }
+
+    if (!LANG_LABEL_MAP[lang]) return;
 
     if (currentAbortController) {
       currentAbortController.abort();
@@ -2854,6 +3227,10 @@
   const observer = new MutationObserver(_debouncedInitButtons);
   CleanupManager.addObserver(observer);
   observer.observe(document.body, { childList: true, subtree: true });
+
+  const _pauseObserver  = () => observer.disconnect();
+  const _resumeObserver = () => observer.observe(document.body, { childList: true, subtree: true });
+
   CleanupManager.addListener(window, "yt-navigate-finish", initButtons);
   setTimeout(initButtons, 1000);
 })();
