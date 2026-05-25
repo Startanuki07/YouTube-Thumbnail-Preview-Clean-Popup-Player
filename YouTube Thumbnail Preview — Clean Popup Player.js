@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.0.0
+// @version      1.5.0.1
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -50,6 +50,14 @@
     addListener(element, event, handler, options) {
       this.listeners.push({ element, event, handler, options });
       element.addEventListener(event, handler, options);
+    },
+
+    removeListener(element, event, handler) {
+      const idx = this.listeners.findIndex(
+        (e) => e.element === element && e.event === event && e.handler === handler
+      );
+      if (idx !== -1) this.listeners.splice(idx, 1);
+      element.removeEventListener(event, handler);
     },
 
     cleanup() {
@@ -770,6 +778,14 @@
   const _savedLang = getCfg("ytLanguage");
   const currentLang = SUPPORTED_LANGS.includes(_savedLang) ? _savedLang : "en";
   const txt = (key) => LANG_DICT[key]?.[currentLang] ?? LANG_DICT[key]?.["en"] ?? key;
+  
+  const txtF = (key, params) => {
+    let s = txt(key);
+    for (const [k, v] of Object.entries(params)) {
+      s = s.replaceAll(`\${${k}}`, v);
+    }
+    return s;
+  };
 
   function showLangSwitchDialog(targetLang, onConfirm, onCancel) {
     document.getElementById("yt-lang-switch-overlay")?.remove();
@@ -1658,7 +1674,7 @@
     if (opt.wide === "fit") {
       return shorts
         ? { width: "min(90vw, calc(90vh * 9 / 16))", height: "min(90vh, calc(90vw * 16 / 9))" }
-        : { width: "90vw", height: "calc(90vw * 9 / 16)" };
+        : { width: "min(90vw, calc(90vh * 16 / 9))", height: "min(90vh, calc(90vw * 9 / 16))" };
     }
     return shorts ? opt.short() : opt.wide();
   }
@@ -1922,12 +1938,18 @@
             pointer-events:auto;
         `;
 
-    controls.innerHTML = `
-            <div id="closeBtn" title="${txt("close")}" style="${btnStyle}">✖</div>
-            <div id="resizeBtn" title="${txt("resize")}: ${SIZE_OPTIONS[currentSizeIndex].name}" style="${btnStyle}">⛶</div>
-            <div id="speedBtn" title="${txt("speed")}" style="${btnStyle}">1x</div>
-            <div id="qualityBtn" title="${txt("quality")}" style="${btnStyle}">HD</div>
-        `;
+    const _mkBtn = (id, titleKey, text, extraTitle = "") => {
+      const el = document.createElement("div");
+      el.id = id;
+      el.title = txt(titleKey) + extraTitle;
+      el.textContent = text;
+      el.style.cssText = btnStyle;
+      return el;
+    };
+    controls.appendChild(_mkBtn("closeBtn",  "close",  "✖"));
+    controls.appendChild(_mkBtn("resizeBtn", "resize", "⛶", `: ${SIZE_OPTIONS[currentSizeIndex].name}`));
+    controls.appendChild(_mkBtn("speedBtn",  "speed",  "1x"));
+    controls.appendChild(_mkBtn("qualityBtn","quality","HD"));
 
     const dropdown = document.createElement("div");
     dropdown.id = "yt-ctrl-dropdown";
@@ -2019,11 +2041,7 @@
     };
 
     if (messageListener) {
-      window.removeEventListener("message", messageListener);
-      const idx = CleanupManager.listeners.findIndex(
-        (entry) => entry.element === window && entry.event === "message" && entry.handler === messageListener
-      );
-      if (idx !== -1) CleanupManager.listeners.splice(idx, 1);
+      CleanupManager.removeListener(window, "message", messageListener);
     }
 
     messageListener = (e) => {
@@ -2428,12 +2446,12 @@
       let countdown = 2;
       const countEl = document.createElement("span");
       countEl.style.cssText = "font-size:11px;color:#aaa;margin-left:8px;";
-      countEl.textContent = txt("save_countdown").replace("${n}", countdown);
+      countEl.textContent = txtF("save_countdown", { n: countdown });
       saveBtn.after(countEl);
 
       const tick = setInterval(() => {
         countdown--;
-        countEl.textContent = txt("save_countdown").replace("${n}", countdown);
+        countEl.textContent = txtF("save_countdown", { n: countdown });
         if (countdown <= 0) {
           clearInterval(tick);
           window.location.reload();
@@ -2511,14 +2529,14 @@
     </svg>`;
     copyBtn.onmouseenter = () => { copyBtn.style.color = "#fff"; copyBtn.style.background = "rgba(62,166,255,0.3)"; };
     copyBtn.onmouseleave = () => { copyBtn.style.color = "#888"; copyBtn.style.background = "transparent"; };
-    copyBtn._svg = copyBtn.innerHTML;
+    const svgSnapshot = copyBtn.innerHTML;
     copyBtn.onclick = (e) => {
       e.stopPropagation();
       const url = `https://www.youtube.com/watch?v=${videoId}`;
       navigator.clipboard.writeText(url).then(() => {
         copyBtn.innerHTML = "✓";
         copyBtn.style.color = "#4caf50";
-        setTimeout(() => { copyBtn.innerHTML = copyBtn._svg; copyBtn.style.color = "#888"; }, 1500);
+        setTimeout(() => { copyBtn.innerHTML = svgSnapshot; copyBtn.style.color = "#888"; }, 1500);
       }).catch(() => {
         const ta = document.createElement("textarea");
         ta.value = url; ta.style.position = "fixed"; ta.style.opacity = "0";
@@ -2527,7 +2545,7 @@
         ta.remove();
         copyBtn.innerHTML = "✓";
         copyBtn.style.color = "#4caf50";
-        setTimeout(() => { copyBtn.innerHTML = copyBtn._svg; copyBtn.style.color = "#888"; }, 1500);
+        setTimeout(() => { copyBtn.innerHTML = svgSnapshot; copyBtn.style.color = "#888"; }, 1500);
       });
     };
 
@@ -2640,7 +2658,7 @@
       `;
 
     overlay.onclick = (e) => {
-      if (e.target === overlay && !e.target.closest('#yt-comment-box')) {
+      if (e.target === overlay) {
         if (currentAbortController) currentAbortController.abort();
         overlay.remove();
       }
