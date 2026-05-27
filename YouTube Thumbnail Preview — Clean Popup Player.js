@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.0.1
+// @version      1.5.0.2
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -829,31 +829,45 @@
 
     const FLAG = LANG_FLAGS;
 
-    dialog.innerHTML = `
-      <div style="display:flex; align-items:center; gap:10px;">
-        <span style="font-size:26px; line-height:1;">🌐</span>
-        <span style="font-size:18px; font-weight:700; color:#3ea6ff;">
-          ${txt("lang_switch_title")}
-        </span>
-      </div>
-      <div style="font-size:15px; color:#ccc; line-height:1.6;">
-        ${txt("lang_switch_msg")}
-        <span style="font-size:22px; margin-left:4px;">${FLAG[targetLang] || "🌐"}</span>
-        <strong style="color:#fff; margin-left:4px;">${targetLabel}</strong>
-      </div>
-      <div style="display:flex; gap:12px; justify-content:flex-end; margin-top:4px;">
-        <button id="yt-lang-cancel" style="
-          padding: 8px 20px; border-radius: 6px; border: 1px solid #555;
-          background: #333; color: #ccc; cursor: pointer; font-size: 14px;
-          transition: filter 0.15s;
-        ">${txt("lang_switch_cancel")}</button>
-        <button id="yt-lang-confirm" style="
-          padding: 8px 20px; border-radius: 6px; border: none;
-          background: #3ea6ff; color: #000; cursor: pointer;
-          font-size: 14px; font-weight: 700; transition: filter 0.15s;
-        ">${txt("lang_switch_confirm")}</button>
-      </div>
-    `;
+    const titleRow = document.createElement("div");
+    titleRow.style.cssText = "display:flex; align-items:center; gap:10px;";
+    const globeSpan = document.createElement("span");
+    globeSpan.style.cssText = "font-size:26px; line-height:1;";
+    globeSpan.textContent = "🌐";
+    const titleSpan = document.createElement("span");
+    titleSpan.style.cssText = "font-size:18px; font-weight:700; color:#3ea6ff;";
+    titleSpan.textContent = txt("lang_switch_title");
+    titleRow.appendChild(globeSpan);
+    titleRow.appendChild(titleSpan);
+
+    const msgRow = document.createElement("div");
+    msgRow.style.cssText = "font-size:15px; color:#ccc; line-height:1.6;";
+    msgRow.appendChild(document.createTextNode(txt("lang_switch_msg")));
+    const flagSpan = document.createElement("span");
+    flagSpan.style.cssText = "font-size:22px; margin-left:4px;";
+    flagSpan.textContent = FLAG[targetLang] || "🌐";
+    const labelStrong = document.createElement("strong");
+    labelStrong.style.cssText = "color:#fff; margin-left:4px;";
+    labelStrong.textContent = targetLabel;
+    msgRow.appendChild(flagSpan);
+    msgRow.appendChild(labelStrong);
+
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex; gap:12px; justify-content:flex-end; margin-top:4px;";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.id = "yt-lang-cancel";
+    cancelBtn.textContent = txt("lang_switch_cancel");
+    cancelBtn.style.cssText = "padding:8px 20px;border-radius:6px;border:1px solid #555;background:#333;color:#ccc;cursor:pointer;font-size:14px;transition:filter 0.15s;";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.id = "yt-lang-confirm";
+    confirmBtn.textContent = txt("lang_switch_confirm");
+    confirmBtn.style.cssText = "padding:8px 20px;border-radius:6px;border:none;background:#3ea6ff;color:#000;cursor:pointer;font-size:14px;font-weight:700;transition:filter 0.15s;";
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(confirmBtn);
+
+    dialog.appendChild(titleRow);
+    dialog.appendChild(msgRow);
+    dialog.appendChild(btnRow);
 
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
@@ -882,9 +896,9 @@
     };
 
     dialog.querySelector("#yt-lang-confirm").onclick = () => {
-      const confirmBtn = dialog.querySelector("#yt-lang-confirm");
-      confirmBtn.disabled = true;
-      confirmBtn.textContent = "⏳ ...";
+      const confirmBtnEl = dialog.querySelector("#yt-lang-confirm");
+      confirmBtnEl.disabled = true;
+      confirmBtnEl.textContent = "⏳ ...";
       document.removeEventListener("keydown", escHandler);
 
       GM_setValue("ytLanguage", targetLang);
@@ -2060,19 +2074,26 @@
     qualityBtn.onclick = (e) => {
       e.stopPropagation();
       if (availableLevels.length === 0) {
+        if (qualityBtn._waitingQuality) return;
+        qualityBtn._waitingQuality = true;
         sendToIframe("GET_QUALITY");
         qualityBtn.textContent = "…";
         const waitQuality = (ev) => {
           try {
             const d = JSON.parse(ev.data);
             if (d.type === "QUALITY_LIST") {
-              window.removeEventListener("message", waitQuality);
+              CleanupManager.removeListener(window, "message", waitQuality);
+              clearTimeout(waitQualityTimer);
+              qualityBtn._waitingQuality = false;
               qualityBtn.click();
             }
           } catch (_) {}
         };
-        window.addEventListener("message", waitQuality);
-        setTimeout(() => window.removeEventListener("message", waitQuality), 4000);
+        CleanupManager.addListener(window, "message", waitQuality);
+        const waitQualityTimer = setTimeout(() => {
+          CleanupManager.removeListener(window, "message", waitQuality);
+          qualityBtn._waitingQuality = false;
+        }, 4000);
         return;
       }
       const cur = qualityBtn.dataset.current || availableLevels[0];
@@ -2687,113 +2708,64 @@
           flex-grow:1; flex-wrap:wrap;
       `;
 
-    controls.innerHTML = `
-          <label>${txt("c_sort")}
-              <select id="c_order" class="common-control">
-                  <option value="relevance">${txt("c_relevance")}</option>
-                  <option value="time">${txt("c_time")}</option>
-              </select>
-          </label>
-          <label>${txt("c_count")}
-              <select id="c_count" class="common-control">
-                  <option value="100">100</option>
-                  <option value="300">300</option>
-                  <option value="500">500</option>
-                  <option value="800">800</option>
-              </select>
-          </label>
-          <label>🌐
-              <select id="c_lang" class="common-control">
-                  <option value="">${txt("c_trans")}</option>
-                  <optgroup label="── East Asia ──">
-                  <option value="zh-TW">繁體中文</option>
-                  <option value="zh-CN">简体中文</option>
-                  <option value="ja">日本語</option>
-                  <option value="ko">한국어</option>
-                  <option value="mn">Монгол</option>
-                  </optgroup>
-                  <optgroup label="── Southeast Asia ──">
-                  <option value="th">ภาษาไทย</option>
-                  <option value="vi">Tiếng Việt</option>
-                  <option value="id">Bahasa Indonesia</option>
-                  <option value="ms">Bahasa Melayu</option>
-                  <option value="tl">Filipino</option>
-                  <option value="km">ភាសាខ្មែរ</option>
-                  <option value="lo">ພາສາລາວ</option>
-                  <option value="my">မြန်မာဘာသာ</option>
-                  </optgroup>
-                  <optgroup label="── South Asia ──">
-                  <option value="hi">हिन्दी</option>
-                  <option value="bn">বাংলা</option>
-                  <option value="ur">اردو</option>
-                  <option value="ne">नेपाली</option>
-                  <option value="si">සිංහල</option>
-                  </optgroup>
-                  <optgroup label="── Western Europe ──">
-                  <option value="en">English</option>
-                  <option value="fr">Français</option>
-                  <option value="de">Deutsch</option>
-                  <option value="es">Español</option>
-                  <option value="pt">Português</option>
-                  <option value="it">Italiano</option>
-                  <option value="nl">Nederlands</option>
-                  <option value="ca">Català</option>
-                  </optgroup>
-                  <optgroup label="── Northern Europe ──">
-                  <option value="sv">Svenska</option>
-                  <option value="no">Norsk</option>
-                  <option value="da">Dansk</option>
-                  <option value="fi">Suomi</option>
-                  <option value="is">Íslenska</option>
-                  </optgroup>
-                  <optgroup label="── Eastern Europe ──">
-                  <option value="ru">Русский</option>
-                  <option value="uk">Українська</option>
-                  <option value="pl">Polski</option>
-                  <option value="cs">Čeština</option>
-                  <option value="sk">Slovenčina</option>
-                  <option value="hu">Magyar</option>
-                  <option value="ro">Română</option>
-                  <option value="bg">Български</option>
-                  <option value="hr">Hrvatski</option>
-                  <option value="sr">Српски</option>
-                  <option value="sl">Slovenščina</option>
-                  <option value="lt">Lietuvių</option>
-                  <option value="lv">Latviešu</option>
-                  <option value="et">Eesti</option>
-                  <option value="mk">Македонски</option>
-                  <option value="sq">Shqip</option>
-                  <option value="mt">Malti</option>
-                  </optgroup>
-                  <optgroup label="── Southern Europe ──">
-                  <option value="el">Ελληνικά</option>
-                  </optgroup>
-                  <optgroup label="── Middle East / West Asia ──">
-                  <option value="ar">العربية</option>
-                  <option value="he">עברית</option>
-                  <option value="fa">فارسی</option>
-                  <option value="tr">Türkçe</option>
-                  <option value="az">Azərbaycan</option>
-                  <option value="ka">ქართული</option>
-                  <option value="hy">Հայերեն</option>
-                  </optgroup>
-                  <optgroup label="── Central Asia ──">
-                  <option value="kk">Қазақша</option>
-                  <option value="uz">Oʻzbekcha</option>
-                  </optgroup>
-                  <optgroup label="── Africa ──">
-                  <option value="sw">Kiswahili</option>
-                  <option value="af">Afrikaans</option>
-                  <option value="am">አማርኛ</option>
-                  <option value="yo">Yorùbá</option>
-                  <option value="ha">Hausa</option>
-                  <option value="zu">isiZulu</option>
-                  </optgroup>
-              </select>
-          </label>
-          <input id="c_search" type="text" placeholder="${txt("c_search")}"
-                 class="common-control" style="width:120px;">
-      `;
+    const _mkLabel = (textKey, child) => {
+      const lbl = document.createElement("label");
+      lbl.appendChild(document.createTextNode(txt(textKey) + " "));
+      lbl.appendChild(child);
+      return lbl;
+    };
+    const _mkSelect = (id) => {
+      const sel = document.createElement("select");
+      sel.id = id;
+      sel.className = "common-control";
+      return sel;
+    };
+    const _mkOpt = (value, text) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      return opt;
+    };
+    const _mkOptGroup = (label, entries) => {
+      const grp = document.createElement("optgroup");
+      grp.label = label;
+      entries.forEach(([v, t]) => grp.appendChild(_mkOpt(v, t)));
+      return grp;
+    };
+
+    const orderSel = _mkSelect("c_order");
+    orderSel.appendChild(_mkOpt("relevance", txt("c_relevance")));
+    orderSel.appendChild(_mkOpt("time",      txt("c_time")));
+    controls.appendChild(_mkLabel("c_sort", orderSel));
+
+    const countSel = _mkSelect("c_count");
+    [100, 300, 500, 800].forEach(n => countSel.appendChild(_mkOpt(String(n), String(n))));
+    controls.appendChild(_mkLabel("c_count", countSel));
+
+    const langSel = _mkSelect("c_lang");
+    langSel.appendChild(_mkOpt("", txt("c_trans")));
+    langSel.appendChild(_mkOptGroup("── East Asia ──",        [["zh-TW","繁體中文"],["zh-CN","简体中文"],["ja","日本語"],["ko","한국어"],["mn","Монгол"]]));
+    langSel.appendChild(_mkOptGroup("── Southeast Asia ──",   [["th","ภาษาไทย"],["vi","Tiếng Việt"],["id","Bahasa Indonesia"],["ms","Bahasa Melayu"],["tl","Filipino"],["km","ភាសាខ្មែរ"],["lo","ພາສາລາວ"],["my","မြန်မာဘာသာ"]]));
+    langSel.appendChild(_mkOptGroup("── South Asia ──",       [["hi","हिन्दी"],["bn","বাংলা"],["ur","اردو"],["ne","नेपाली"],["si","සිංහල"]]));
+    langSel.appendChild(_mkOptGroup("── Western Europe ──",   [["en","English"],["fr","Français"],["de","Deutsch"],["es","Español"],["pt","Português"],["it","Italiano"],["nl","Nederlands"],["ca","Català"]]));
+    langSel.appendChild(_mkOptGroup("── Northern Europe ──",  [["sv","Svenska"],["no","Norsk"],["da","Dansk"],["fi","Suomi"],["is","Íslenska"]]));
+    langSel.appendChild(_mkOptGroup("── Eastern Europe ──",   [["ru","Русский"],["uk","Українська"],["pl","Polski"],["cs","Čeština"],["sk","Slovenčina"],["hu","Magyar"],["ro","Română"],["bg","Български"],["hr","Hrvatski"],["sr","Српски"],["sl","Slovenščina"],["lt","Lietuvių"],["lv","Latviešu"],["et","Eesti"],["mk","Македонски"],["sq","Shqip"],["mt","Malti"]]));
+    langSel.appendChild(_mkOptGroup("── Southern Europe ──",  [["el","Ελληνικά"]]));
+    langSel.appendChild(_mkOptGroup("── Middle East / West Asia ──", [["ar","العربية"],["he","עברית"],["fa","فارسی"],["tr","Türkçe"],["az","Azərbaycan"],["ka","ქართული"],["hy","Հայերեն"]]));
+    langSel.appendChild(_mkOptGroup("── Central Asia ──",     [["kk","Қазақша"],["uz","Oʻzbekcha"]]));
+    langSel.appendChild(_mkOptGroup("── Africa ──",           [["sw","Kiswahili"],["af","Afrikaans"],["am","አማርኛ"],["yo","Yorùbá"],["ha","Hausa"],["zu","isiZulu"]]));
+    const langLabel = document.createElement("label");
+    langLabel.appendChild(document.createTextNode("🌐 "));
+    langLabel.appendChild(langSel);
+    controls.appendChild(langLabel);
+
+    const searchInput = document.createElement("input");
+    searchInput.id = "c_search";
+    searchInput.type = "text";
+    searchInput.placeholder = txt("c_search");
+    searchInput.className = "common-control";
+    searchInput.style.width = "120px";
+    controls.appendChild(searchInput);
     prependTopLangs(controls.querySelector("#c_lang"));
 
     const btnGroup = document.createElement("div");
@@ -2848,7 +2820,10 @@
           display:flex; justify-content:space-between; align-items:center;
           margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #333;
       `;
-    titleBar.innerHTML = `<div style="font-size:18px; font-weight:bold;">${txt("c_preview")}</div>`;
+    const titleText = document.createElement("div");
+    titleText.style.cssText = "font-size:18px; font-weight:bold;";
+    titleText.textContent = txt("c_preview");
+    titleBar.appendChild(titleText);
 
     const pageControls = document.createElement("div");
     pageControls.style.cssText = "display:flex; gap:8px;";
@@ -3125,27 +3100,51 @@
       `;
     box.onclick = (e) => e.stopPropagation();
 
-    box.innerHTML = `
-          <h3 style="margin-top:0;">${txt("api_title")}</h3>
-          <p style="color:#aaa;font-size:14px;">${txt("api_desc")}</p>
-          <input type="text" id="k_input"
-                 placeholder="API Key"
-                 style="width:90%;padding:8px;margin:10px 0;background:#111;border:1px solid #444;color:white;">
-          <div style="display:flex;justify-content:center;gap:10px;">
-              <button id="k_save"
-                      style="background:#3ea6ff;color:black;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">
-                  ${txt("save")}
-              </button>
-              <button id="k_del"
-                      style="background:#444;color:white;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">
-                  ${txt("api_del")}
-              </button>
-          </div>
-          <div style="margin-top:15px;font-size:12px;">
-              <a href="https://console.cloud.google.com/apis/credentials"
-                 target="_blank" style="color:#0f9d58;">${txt("api_apply")}</a>
-          </div>
-      `;
+    const _h3 = document.createElement("h3");
+    _h3.style.marginTop = "0";
+    _h3.textContent = txt("api_title");
+
+    const _p = document.createElement("p");
+    _p.style.cssText = "color:#aaa;font-size:14px;";
+    _p.textContent = txt("api_desc");
+
+    const _input = document.createElement("input");
+    _input.type = "text";
+    _input.id = "k_input";
+    _input.placeholder = "API Key";
+    _input.style.cssText = "width:90%;padding:8px;margin:10px 0;background:#111;border:1px solid #444;color:white;";
+
+    const _btnRow = document.createElement("div");
+    _btnRow.style.cssText = "display:flex;justify-content:center;gap:10px;";
+
+    const _kSave = document.createElement("button");
+    _kSave.id = "k_save";
+    _kSave.textContent = txt("save");
+    _kSave.style.cssText = "background:#3ea6ff;color:black;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;";
+
+    const _kDel = document.createElement("button");
+    _kDel.id = "k_del";
+    _kDel.textContent = txt("api_del");
+    _kDel.style.cssText = "background:#444;color:white;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;";
+
+    _btnRow.appendChild(_kSave);
+    _btnRow.appendChild(_kDel);
+
+    const _linkRow = document.createElement("div");
+    _linkRow.style.cssText = "margin-top:15px;font-size:12px;";
+    const _link = document.createElement("a");
+    _link.href = "https://console.cloud.google.com/apis/credentials";
+    _link.target = "_blank";
+    _link.style.color = "#0f9d58";
+    _link.textContent = txt("api_apply");
+    _linkRow.appendChild(_link);
+
+    box.appendChild(_h3);
+    box.appendChild(_p);
+    box.appendChild(_input);
+    box.appendChild(_btnRow);
+    box.appendChild(_linkRow);
+
     box.querySelector("#k_input").value = API_KEY || "";
     overlay.appendChild(box);
     document.body.appendChild(overlay);
