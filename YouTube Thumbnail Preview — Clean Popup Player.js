@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.0.2
+// @version      1.5.0.3
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -757,6 +757,10 @@
       "pt-BR": "Copiar URL",
       fr: "Copier l'URL",
     },
+    speed_normal: {
+      en: "Normal", "zh-TW": "正常", "zh-CN": "正常", ja: "標準", ko: "보통",
+      es: "Normal", "pt-BR": "Normal", fr: "Normal",
+    },
   };
 
   const SUPPORTED_LANGS = ["en", "zh-TW", "zh-CN", "ja", "ko", "es", "pt-BR", "fr"];
@@ -1338,7 +1342,7 @@
         const pBtn = container.querySelector(".yt-preview-play-btn");
         if (pBtn) {
           pBtn.classList.remove("ready", "progressing", "loading");
-          pBtn.innerHTML = "▶";
+          pBtn.textContent = "▶";
         }
       }
       return;
@@ -1354,12 +1358,12 @@
     const playBtn = showPlay ? document.createElement("div") : null;
     if (playBtn) {
       playBtn.className = "yt-preview-play-btn";
-      playBtn.innerHTML = "▶";
+      playBtn.textContent = "▶";
     }
     const commentBtn = showComment ? document.createElement("div") : null;
     if (commentBtn) {
       commentBtn.className = "yt-preview-comment-btn";
-      commentBtn.innerHTML = "💬";
+      commentBtn.textContent = "💬";
     }
 
     const size    = getCfg("ytThumbButtonSize");
@@ -1421,11 +1425,17 @@
   }
 
   let _activeTransitionDismiss = null;
+  let _transitionSession = 0;
+  let _activeCanplayHandler = null;
 
   function showTransitionOverlay(style, onReady) {
     if (_activeTransitionDismiss) {
       try { _activeTransitionDismiss(false); } catch (_) {}
       _activeTransitionDismiss = null;
+    }
+    if (_activeCanplayHandler) {
+      window.removeEventListener("message", _activeCanplayHandler);
+      _activeCanplayHandler = null;
     }
     document.getElementById("yt-transition-overlay")?.remove();
 
@@ -1436,11 +1446,13 @@
 
     const MAX_WAIT = 10000;
     let dismissed = false;
+    const session = ++_transitionSession;
 
     const dismiss = (sendUnmute = true) => {
       if (dismissed) return;
       dismissed = true;
       window.removeEventListener("message", canplayHandler);
+      if (_activeCanplayHandler === canplayHandler) _activeCanplayHandler = null;
       clearTimeout(safeTimer);
       ov.classList.add("fade-out");
 
@@ -1462,10 +1474,17 @@
 
     const canplayHandler = (e) => {
       if (e.data !== "__YT_CANPLAY__") return;
+      if (_transitionSession !== session) {
+        window.removeEventListener("message", canplayHandler);
+        if (_activeCanplayHandler === canplayHandler) _activeCanplayHandler = null;
+        return;
+      }
       window.removeEventListener("message", canplayHandler);
+      if (_activeCanplayHandler === canplayHandler) _activeCanplayHandler = null;
       clearTimeout(safeTimer);
       setTimeout(() => dismiss(true), settleDelay);
     };
+    _activeCanplayHandler = canplayHandler;
     window.addEventListener("message", canplayHandler);
 
     const safeTimer = setTimeout(() => dismiss(true), MAX_WAIT);
@@ -2038,7 +2057,7 @@
       showDropdown(
         speedBtn,
         txt("speed"),
-        SPEEDS.map(s => ({ text: s === 1 ? `${s}x  (${txt("speed").replace(/速|Speed|速度|속도|Vitesse|Velocidade|Velocidad/i,"").trim()} Normal)`.replace(/\s+/," ").trim() : s + "x", value: s, active: s === currentSpeed })),
+        SPEEDS.map(s => ({ text: s === 1 ? `${s}x  (${txt("speed_normal")})` : s + "x", value: s, active: s === currentSpeed })),
         (val) => {
           currentSpeed = val;
           sendToIframe("SET_SPEED", val);
@@ -2078,6 +2097,7 @@
         qualityBtn._waitingQuality = true;
         sendToIframe("GET_QUALITY");
         qualityBtn.textContent = "…";
+        let waitQualityTimer;
         const waitQuality = (ev) => {
           try {
             const d = JSON.parse(ev.data);
@@ -2090,7 +2110,7 @@
           } catch (_) {}
         };
         CleanupManager.addListener(window, "message", waitQuality);
-        const waitQualityTimer = setTimeout(() => {
+        waitQualityTimer = setTimeout(() => {
           CleanupManager.removeListener(window, "message", waitQuality);
           qualityBtn._waitingQuality = false;
         }, 4000);
@@ -2203,126 +2223,155 @@
 
     document.body.classList.add("yt-panel-open");
 
-    const RESET_BTN = (k) =>
-      `<button type="button" data-reset="${k}" title="Reset" style="
-        flex-shrink:0;background:none;border:1px solid #555;color:#888;
-        border-radius:3px;padding:0 5px;font-size:10px;cursor:pointer;
-        line-height:1.6;margin-left:4px;">↺</button>`;
+    const _mkResetBtn = (k) => {
+      const btn = document.createElement("button");
+      btn.type = "button"; btn.dataset.reset = k; btn.title = "Reset"; btn.textContent = "↺";
+      btn.style.cssText = "flex-shrink:0;background:none;border:1px solid #555;color:#888;border-radius:3px;padding:0 5px;font-size:10px;cursor:pointer;line-height:1.6;margin-left:4px;";
+      return btn;
+    };
+    
+    const _mkRow = (lbl, ...ctrlEls) => {
+      const row = document.createElement("div");
+      row.className = "yt-cp-row";
+      const lblEl = document.createElement("span");
+      lblEl.className = "yt-cp-lbl";
+      if (typeof lbl === "string") lblEl.textContent = lbl; else lblEl.appendChild(lbl);
+      const ctrl = document.createElement("div");
+      ctrl.className = "yt-cp-ctrl";
+      ctrlEls.forEach(el => ctrl.appendChild(el));
+      row.appendChild(lblEl); row.appendChild(ctrl);
+      return row;
+    };
+    
+    const _mkRangeRow = (lbl, k, min, max) => {
+      const input = document.createElement("input");
+      input.type = "range"; input.id = k; input.min = min; input.max = max;
+      input.value = getCfg(k); input.step = max <= 1 ? "0.1" : "1";
+      input.style.cssText = "flex:1;min-width:0;";
+      const valSpan = document.createElement("span");
+      valSpan.id = "d_" + k;
+      valSpan.style.cssText = "width:34px;text-align:right;flex-shrink:0;font-size:12px;";
+      valSpan.textContent = getCfg(k);
+      return _mkRow(lbl, input, valSpan, _mkResetBtn(k));
+    };
+    
+    const _mkCheckRow = (lbl, k) => {
+      const input = document.createElement("input");
+      input.type = "checkbox"; input.id = k; input.checked = !!getCfg(k);
+      const row = _mkRow(lbl, input, _mkResetBtn(k));
+      row.style.alignItems = "center";
+      row.querySelector(".yt-cp-ctrl").style.cssText = "display:flex;align-items:center;justify-content:flex-start;gap:8px;";
+      return row;
+    };
+    
+    const _mkSelectRow = (lbl, k, optFn) => {
+      const sel = document.createElement("select");
+      sel.id = k;
+      sel.style.cssText = "background:#333;color:white;border:1px solid #555;border-radius:4px;padding:2px 6px;flex:1;min-width:0;";
+      optFn(sel);
+      const row = _mkRow(lbl, sel, _mkResetBtn(k));
+      row.style.alignItems = "center";
+      row.querySelector(".yt-cp-ctrl").style.cssText = "display:flex;align-items:center;justify-content:flex-start;gap:6px;";
+      return row;
+    };
+    
+    const _mkSec = (t) => { const d = document.createElement("div"); d.className = "yt-cp-section"; d.textContent = t; return d; };
 
-    const mkRange = (lbl, k, min, max) => `
-      <div class="yt-cp-row">
-        <span class="yt-cp-lbl">${lbl}</span>
-        <div class="yt-cp-ctrl">
-          <input type="range" id="${k}" min="${min}" max="${max}"
-                 value="${getCfg(k)}" step="${max <= 1 ? 0.1 : 1}"
-                 style="flex:1;min-width:0;">
-          <span id="d_${k}" style="width:34px;text-align:right;flex-shrink:0;font-size:12px;">
-            ${getCfg(k)}
-          </span>
-          ${RESET_BTN(k)}
-        </div>
-      </div>`;
+    const _cpStyle = document.createElement("style");
+    _cpStyle.textContent = [
+      "#yt-master-control-panel .yt-cp-section{font-size:11px;color:#888;margin:14px 0 8px;padding-top:10px;border-top:1px solid #383838;letter-spacing:0.04em;text-transform:uppercase;}",
+      "#yt-master-control-panel .yt-cp-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;align-items:center;margin-bottom:7px;}",
+      "#yt-master-control-panel .yt-cp-lbl{font-size:12px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      "#yt-master-control-panel .yt-cp-ctrl{display:flex;align-items:center;gap:4px;}",
+      "#yt-master-control-panel button[data-reset]:hover{color:#fff;border-color:#aaa;}",
+    ].join("\n");
+    p.appendChild(_cpStyle);
 
-    const mkCheck = (lbl, k) => `
-      <div class="yt-cp-row" style="align-items:center;">
-        <span class="yt-cp-lbl">${lbl}</span>
-        <div class="yt-cp-ctrl" style="justify-content:flex-start;gap:8px;">
-          <input type="checkbox" id="${k}" ${getCfg(k) ? "checked" : ""}>
-          ${RESET_BTN(k)}
-        </div>
-      </div>`;
+    const _cpH3 = document.createElement("h3");
+    _cpH3.style.cssText = "margin:0 0 12px;color:#3ea6ff;border-bottom:1px solid #444;padding-bottom:10px;";
+    _cpH3.textContent = txt("panel_title");
+    p.appendChild(_cpH3);
 
-    const mkSelect = (lbl, k, opts) => `
-      <div class="yt-cp-row" style="align-items:center;">
-        <span class="yt-cp-lbl">${lbl}</span>
-        <div class="yt-cp-ctrl" style="justify-content:flex-start;gap:6px;">
-          <select id="${k}" style="background:#333;color:white;border:1px solid #555;border-radius:4px;padding:2px 6px;flex:1;min-width:0;">
-            ${opts}
-          </select>
-          ${RESET_BTN(k)}
-        </div>
-      </div>`;
+    p.appendChild(_mkSelectRow("🌐 Language", "ytLanguage", (sel) => {
+      SUPPORTED_LANGS.forEach(code => {
+        const opt = document.createElement("option");
+        opt.value = code;
+        opt.textContent = `${LANG_FLAGS[code] || "🌐"} ${LANG_LABELS[code] || code}`;
+        opt.selected = (getCfg("ytLanguage") === code);
+        sel.appendChild(opt);
+      });
+    }));
 
-    p.innerHTML = `
-      <style>
-        #yt-master-control-panel .yt-cp-section {
-          font-size:11px;color:#888;margin:14px 0 8px;
-          padding-top:10px;border-top:1px solid #383838;
-          letter-spacing:0.04em;text-transform:uppercase;
-        }
-        #yt-master-control-panel .yt-cp-row {
-          display:grid;grid-template-columns:1fr 1fr;
-          gap:6px;align-items:center;margin-bottom:7px;
-        }
-        #yt-master-control-panel .yt-cp-lbl {
-          font-size:12px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-        }
-        #yt-master-control-panel .yt-cp-ctrl {
-          display:flex;align-items:center;gap:4px;
-        }
-        #yt-master-control-panel button[data-reset]:hover { color:#fff;border-color:#aaa; }
-      </style>
+    p.appendChild(_mkSec(txt("btn_settings")));
+    p.appendChild(_mkRangeRow(txt("size"),    "ytThumbButtonSize", 16, 50));
+    p.appendChild(_mkRangeRow(txt("font"),    "ytThumbFontSize",   10, 30));
+    p.appendChild(_mkRangeRow(txt("opacity"), "ytThumbOpacity",    0.1, 1));
+    const _cpRefreshNote = document.createElement("div");
+    _cpRefreshNote.style.cssText = "font-size:10px;color:#555;margin:-4px 0 8px;";
+    _cpRefreshNote.textContent = txt("refresh_note");
+    p.appendChild(_cpRefreshNote);
+    p.appendChild(_mkRangeRow(txt("spacing"),          "ytButtonSpacing",       0,   50));
+    p.appendChild(_mkCheckRow(txt("always_visible"),   "ytButtonsAlwaysVisible"));
+    p.appendChild(_mkCheckRow(txt("show_play_btn"),    "ytShowPlayBtn"));
+    p.appendChild(_mkCheckRow(txt("show_comment_btn"), "ytShowCommentBtn"));
 
-      <h3 style="margin:0 0 12px;color:#3ea6ff;border-bottom:1px solid #444;padding-bottom:10px;">
-        ${txt("panel_title")}
-      </h3>
+    p.appendChild(_mkSec(txt("player_settings")));
+    const _cpPlayerHint = document.createElement("div");
+    _cpPlayerHint.style.cssText = "font-size:11px;color:#666;margin-bottom:8px;";
+    _cpPlayerHint.textContent = txt("player_side_hint");
+    p.appendChild(_cpPlayerHint);
+    p.appendChild(_mkRangeRow(txt("bg_density"),   "ytOverlayOpacity",     0.1, 1));
+    p.appendChild(_mkRangeRow(txt("v_pos"),        "ytPopupButtonOffset",  0,   200));
+    p.appendChild(_mkRangeRow(txt("icon_size"),    "ytPopupSymbolSize",    10,  50));
+    p.appendChild(_mkRangeRow(txt("icon_opacity"), "ytPopupSymbolOpacity", 0.1, 1));
 
-      <!-- 語言 -->
-      ${mkSelect("🌐 Language", "ytLanguage",
-          SUPPORTED_LANGS.map(code =>
-            `<option value="${code}" ${getCfg("ytLanguage") === code ? "selected" : ""}>${LANG_FLAGS[code] || "🌐"} ${LANG_LABELS[code] || code}</option>`
-          ).join("")
-      )}
+    const _cpTransSec = document.createElement("div");
+    _cpTransSec.className = "yt-cp-section";
+    _cpTransSec.textContent = "🎬 " + txt("transition_anim");
+    p.appendChild(_cpTransSec);
+    p.appendChild(_mkCheckRow(txt("transition_anim"), "ytTransitionEnabled"));
 
-      <!-- 按鈕設定 -->
-      <div class="yt-cp-section">${txt("btn_settings")}</div>
-      ${mkRange(txt("size"),    "ytThumbButtonSize", 16, 50)}
-      ${mkRange(txt("font"),    "ytThumbFontSize",   10, 30)}
-      ${mkRange(txt("opacity"), "ytThumbOpacity",    0.1, 1)}
-      <div style="font-size:10px;color:#555;margin:-4px 0 8px;">${txt("refresh_note")}</div>
-      ${mkRange(txt("spacing"), "ytButtonSpacing", 0, 50)}
-      ${mkCheck(txt("always_visible"),  "ytButtonsAlwaysVisible")}
-      ${mkCheck(txt("show_play_btn"),   "ytShowPlayBtn")}
-      ${mkCheck(txt("show_comment_btn"),"ytShowCommentBtn")}
+    const _cpTransEnabled = getCfg("ytTransitionEnabled");
+    const _cpTsLbl = document.createElement("span");
+    _cpTsLbl.appendChild(document.createTextNode(txt("transition_style") + " "));
+    const _cpExpBadge = document.createElement("span");
+    _cpExpBadge.style.cssText = "background:rgba(255,180,0,0.18);color:#ffb400;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;border:1px solid rgba(255,180,0,0.35);vertical-align:middle;letter-spacing:0.04em;";
+    _cpExpBadge.textContent = "⚠️ Exp";
+    _cpTsLbl.appendChild(_cpExpBadge);
 
-      <!-- 播放器設定 -->
-      <div class="yt-cp-section">${txt("player_settings")}</div>
-      <div style="font-size:11px;color:#666;margin-bottom:8px;">${txt("player_side_hint")}</div>
-      ${mkRange(txt("bg_density"),   "ytOverlayOpacity",     0.1, 1)}
-      ${mkRange(txt("v_pos"),        "ytPopupButtonOffset",  0, 200)}
-      ${mkRange(txt("icon_size"),    "ytPopupSymbolSize",    10, 50)}
-      ${mkRange(txt("icon_opacity"), "ytPopupSymbolOpacity", 0.1, 1)}
+    const _tsRow = document.createElement("div");
+    _tsRow.id = "yt-trans-style-row";
+    _tsRow.style.cssText = _cpTransEnabled ? "" : "opacity:0.4;pointer-events:none;";
+    _tsRow.appendChild(_mkSelectRow(_cpTsLbl, "ytTransitionStyle", (sel) => {
+      [["scan","ts_scan","🔵"],["burst","ts_burst","🔴"],["glass","ts_glass","🟣"],["mono","ts_mono","⚪"]].forEach(([val, key, emoji]) => {
+        const opt = document.createElement("option");
+        opt.value = val; opt.textContent = `${emoji} ${txt(key)}`; opt.selected = (getCfg("ytTransitionStyle") === val);
+        sel.appendChild(opt);
+      });
+    }));
+    p.appendChild(_tsRow);
 
-      <!-- 過渡動畫 -->
-      <div class="yt-cp-section">🎬 ${txt("transition_anim")}</div>
-      ${mkCheck(txt("transition_anim"), "ytTransitionEnabled")}
-      <div id="yt-trans-style-row" style="${getCfg("ytTransitionEnabled") ? "" : "opacity:0.4;pointer-events:none;"}">
-        ${mkSelect(`${txt("transition_style")}
-          <span style="background:rgba(255,180,0,0.18);color:#ffb400;font-size:9px;font-weight:700;
-            padding:1px 5px;border-radius:8px;border:1px solid rgba(255,180,0,0.35);
-            vertical-align:middle;letter-spacing:0.04em;">⚠️ Exp</span>`,
-          "ytTransitionStyle", `
-          <option value="scan"  ${getCfg("ytTransitionStyle") === "scan"  ? "selected" : ""}>🔵 ${txt("ts_scan")}</option>
-          <option value="burst" ${getCfg("ytTransitionStyle") === "burst" ? "selected" : ""}>🔴 ${txt("ts_burst")}</option>
-          <option value="glass" ${getCfg("ytTransitionStyle") === "glass" ? "selected" : ""}>🟣 ${txt("ts_glass")}</option>
-          <option value="mono"  ${getCfg("ytTransitionStyle") === "mono"  ? "selected" : ""}>⚪ ${txt("ts_mono")}</option>
-        `)}
-      </div>
-      <div id="yt-trans-delay-row" style="${getCfg("ytTransitionEnabled") ? "" : "opacity:0.4;pointer-events:none;"}">
-        ${mkRange(txt("transition_delay"), "ytTransitionDelay", 400, 1500)}
-      </div>
+    const _tdRow = document.createElement("div");
+    _tdRow.id = "yt-trans-delay-row";
+    _tdRow.style.cssText = _cpTransEnabled ? "" : "opacity:0.4;pointer-events:none;";
+    _tdRow.appendChild(_mkRangeRow(txt("transition_delay"), "ytTransitionDelay", 400, 1500));
+    p.appendChild(_tdRow);
 
-      <!-- 底部按鈕 -->
-      <div style="text-align:right;margin-top:16px;padding-top:12px;border-top:1px solid #383838;">
-        <button id="yt-reset" style="background:#555;color:white;border:none;padding:6px 12px;border-radius:4px;margin-right:8px;cursor:pointer;">
-          ${txt("reset")}
-        </button>
-        <button id="yt-save" style="background:#3ea6ff;color:black;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-weight:bold;">
-          ${txt("save")}
-        </button>
-      </div>
-      <button id="yt-close" style="position:absolute;top:10px;right:10px;background:none;border:none;color:#aaa;font-size:18px;cursor:pointer;">✖</button>
-    `;
+    const _cpBtmRow = document.createElement("div");
+    _cpBtmRow.style.cssText = "text-align:right;margin-top:16px;padding-top:12px;border-top:1px solid #383838;";
+    const _cpResetBtn = document.createElement("button");
+    _cpResetBtn.id = "yt-reset"; _cpResetBtn.textContent = txt("reset");
+    _cpResetBtn.style.cssText = "background:#555;color:white;border:none;padding:6px 12px;border-radius:4px;margin-right:8px;cursor:pointer;";
+    const _cpSaveBtn = document.createElement("button");
+    _cpSaveBtn.id = "yt-save"; _cpSaveBtn.textContent = txt("save");
+    _cpSaveBtn.style.cssText = "background:#3ea6ff;color:black;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-weight:bold;";
+    _cpBtmRow.appendChild(_cpResetBtn); _cpBtmRow.appendChild(_cpSaveBtn);
+    p.appendChild(_cpBtmRow);
+    const _cpCloseBtn = document.createElement("button");
+    _cpCloseBtn.id = "yt-close"; _cpCloseBtn.textContent = "✖";
+    _cpCloseBtn.style.cssText = "position:absolute;top:10px;right:10px;background:none;border:none;color:#aaa;font-size:18px;cursor:pointer;";
+    p.appendChild(_cpCloseBtn);
+
     document.body.appendChild(p);
     _applyNewBadges(p);
 
@@ -2455,9 +2504,6 @@
           writes.push(Promise.resolve(GM_setValue(k, val)));
         }
       }
-      const tsEl = document.getElementById("ytTransitionStyle");
-      if (tsEl) writes.push(Promise.resolve(GM_setValue("ytTransitionStyle", tsEl.value)));
-
       await Promise.all(writes);
 
       saveBtn.textContent = txt("save_done");
@@ -2774,7 +2820,7 @@
 
     const playBtn = document.createElement("button");
     playBtn.className = "yt-comment-btn-hover";
-    playBtn.innerHTML = txt("mini_play");
+    playBtn.textContent = txt("mini_play");
     playBtn.style.cssText = `
           font-size:14px; border:none; background:#3ea6ff; color:#000;
           padding:4px 12px; border-radius:4px; cursor:pointer;
@@ -2788,7 +2834,7 @@
 
     const apiBtn = document.createElement("button");
     apiBtn.className = "yt-comment-btn-hover";
-    apiBtn.innerHTML = txt("c_api");
+    apiBtn.textContent = txt("c_api");
     apiBtn.style.cssText = `
           font-size:14px; border:none; background:#333; color:#fff;
           padding:4px 8px; border-radius:4px; cursor:pointer; transition:0.2s;
@@ -2800,7 +2846,7 @@
     };
 
     const closeBtn = document.createElement("button");
-    closeBtn.innerHTML = "✖";
+    closeBtn.textContent = "✖";
     closeBtn.style.cssText = `
           font-size:18px; border:none; background:transparent;
           color:#aaa; cursor:pointer; margin-left:8px;
@@ -2857,8 +2903,11 @@
     let prevStack = [];
 
     const load = (pt = "") => {
-      content.innerHTML =
-        `<div style="text-align:center;color:#aaa;padding:20px;">${txt("c_loading")}</div>`;
+      content.innerHTML = "";
+      const loadDiv = document.createElement("div");
+      loadDiv.style.cssText = "text-align:center;color:#aaa;padding:20px;";
+      loadDiv.textContent = txt("c_loading");
+      content.appendChild(loadDiv);
       pageToken = pt;
       const order = document.getElementById("c_order").value;
       const max = document.getElementById("c_count").value;
@@ -2866,12 +2915,17 @@
       fetchComments(videoId, order, parseInt(max), pt, (data, error) => {
         content.innerHTML = "";
         if (error) {
-          content.innerHTML = `<div style="color:#f66;">${error.message}</div>`;
+          const errDiv = document.createElement("div");
+          errDiv.style.color = "#f66";
+          errDiv.textContent = error.message;
+          content.appendChild(errDiv);
           return;
         }
         if (!data.length) {
-          content.innerHTML =
-            `<div style="text-align:center;color:#aaa;">${txt("c_no_comments")}</div>`;
+          const emptyDiv = document.createElement("div");
+          emptyDiv.style.cssText = "text-align:center;color:#aaa;";
+          emptyDiv.textContent = txt("c_no_comments");
+          content.appendChild(emptyDiv);
           return;
         }
         allComments = data;
@@ -2915,7 +2969,7 @@
       let acc = [];
       let localPt = pt;
       const fetchPage = () => {
-        const url = `${COMMENT_API}?part=snippet&videoId=${vid}&maxResults=${Math.min(target - acc.length, 100)}&order=${order}&key=${API_KEY}${localPt ? `&pageToken=${localPt}` : ""}`;
+        const url = `${COMMENT_API}?part=snippet&videoId=${vid}&maxResults=${Math.min(target - acc.length, 100)}&order=${order}&key=${API_KEY}${localPt ? `&pageToken=${encodeURIComponent(localPt)}` : ""}`;
         GM_xmlhttpRequest({
           method: "GET",
           url,
