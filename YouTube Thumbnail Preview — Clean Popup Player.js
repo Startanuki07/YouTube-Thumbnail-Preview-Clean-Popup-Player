@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.0.3
+// @version      1.5.0.4
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -791,8 +791,14 @@
     return s;
   };
 
+  let _activeLangEscHandler = null;
+
   function showLangSwitchDialog(targetLang, onConfirm, onCancel) {
     document.getElementById("yt-lang-switch-overlay")?.remove();
+    if (_activeLangEscHandler) {
+      document.removeEventListener("keydown", _activeLangEscHandler);
+      _activeLangEscHandler = null;
+    }
 
     const overlay = document.createElement("div");
     overlay.id = "yt-lang-switch-overlay";
@@ -876,34 +882,39 @@
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
 
+    const clearEsc = () => {
+      document.removeEventListener("keydown", escHandler);
+      _activeLangEscHandler = null;
+    };
     const escHandler = (e) => {
       if (e.key === "Escape") {
         overlay.remove();
         onCancel?.();
-        document.removeEventListener("keydown", escHandler);
+        clearEsc();
       }
     };
     document.addEventListener("keydown", escHandler);
+    _activeLangEscHandler = escHandler;
 
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) {
         overlay.remove();
         onCancel?.();
-        document.removeEventListener("keydown", escHandler);
+        clearEsc();
       }
     });
 
     dialog.querySelector("#yt-lang-cancel").onclick = () => {
       overlay.remove();
       onCancel?.();
-      document.removeEventListener("keydown", escHandler);
+      clearEsc();
     };
 
     dialog.querySelector("#yt-lang-confirm").onclick = () => {
       const confirmBtnEl = dialog.querySelector("#yt-lang-confirm");
       confirmBtnEl.disabled = true;
       confirmBtnEl.textContent = "⏳ ...";
-      document.removeEventListener("keydown", escHandler);
+      clearEsc();
 
       GM_setValue("ytLanguage", targetLang);
       setTimeout(() => {
@@ -1458,16 +1469,10 @@
 
       if (sendUnmute) {
         try {
-          const iframes = document.querySelectorAll("#yt-preview-popup iframe");
-          iframes.forEach(f => {
-            f.style.opacity = "1";
+          document.querySelectorAll("#yt-preview-popup iframe").forEach(f => {
             try { f.contentWindow?.postMessage("__YT_UNMUTE__", "*"); } catch (_) {}
           });
         } catch (_) {}
-      } else {
-         try {
-           document.querySelectorAll("#yt-preview-popup iframe").forEach(f => f.style.opacity = "1");
-         } catch (_) {}
       }
       setTimeout(() => { ov.remove(); _activeTransitionDismiss = null; onReady?.(); }, 480);
     };
@@ -1537,7 +1542,10 @@
         animation: ytScanPulse 2s ease-in-out infinite;
         will-change: transform, box-shadow;
       `;
-      ring.innerHTML = `<span style="color:#3ea6ff;font-size:30px;margin-left:4px;">▶</span>`;
+      const ringIcon = document.createElement("span");
+      ringIcon.style.cssText = "color:#3ea6ff;font-size:30px;margin-left:4px;";
+      ringIcon.textContent = "▶";
+      ring.appendChild(ringIcon);
       ov.appendChild(ring);
 
       const label = document.createElement("div");
@@ -1591,7 +1599,10 @@
         position:relative; z-index:3;
         animation: ytBurstPlay 1.6s ease-in-out infinite;
       `;
-      playIcon.innerHTML = `<span style="color:#ff4e4e;font-size:32px;margin-left:5px;">▶</span>`;
+      const playIconSpan = document.createElement("span");
+      playIconSpan.style.cssText = "color:#ff4e4e;font-size:32px;margin-left:5px;";
+      playIconSpan.textContent = "▶";
+      playIcon.appendChild(playIconSpan);
       ringWrap.appendChild(playIcon);
       ov.appendChild(ringWrap);
 
@@ -1661,7 +1672,10 @@
         animation: ytGlassPulse 2.2s ease-in-out infinite;
         will-change: box-shadow;
       `;
-      glassRing.innerHTML = `<span style="color:rgba(255,255,255,0.9);font-size:34px;margin-left:5px;position:relative;z-index:3;">▶</span>`;
+      const glassIcon = document.createElement("span");
+      glassIcon.style.cssText = "color:rgba(255,255,255,0.9);font-size:34px;margin-left:5px;position:relative;z-index:3;";
+      glassIcon.textContent = "▶";
+      glassRing.appendChild(glassIcon);
 
       const arc = document.createElement("div");
       arc.style.cssText = `
@@ -1894,6 +1908,7 @@
     const opacity = getCfg("ytOverlayOpacity");
     const overlay = document.createElement("div");
     overlay.id = "yt-preview-popup";
+    overlay.tabIndex = -1;
     overlay._isShorts = shorts;
     overlay.style.cssText = `
             position:fixed;top:0;left:0;width:100%;height:100%;
@@ -2423,6 +2438,7 @@
           applyRealTime(k, def);
         } else {
           el.value = def;
+          el.dispatchEvent(new Event("change", { bubbles: true }));
         }
       });
     });
@@ -2718,17 +2734,23 @@
     document.getElementById("yt-comment-overlay")?.remove();
     const overlay = document.createElement("div");
     overlay.id = "yt-comment-overlay";
+    overlay.tabIndex = -1;
     overlay.style.cssText = `
           position:fixed; top:0; left:0; width:100vw; height:100vh;
           background:rgba(0,0,0,0.85); z-index:999999;
           display:flex; justify-content:center; align-items:center; outline:none;
       `;
 
+    const closeComments = () => {
+      if (currentAbortController) currentAbortController.abort();
+      overlay.remove();
+    };
+
     overlay.onclick = (e) => {
-      if (e.target === overlay) {
-        if (currentAbortController) currentAbortController.abort();
-        overlay.remove();
-      }
+      if (e.target === overlay) closeComments();
+    };
+    overlay.onkeydown = (e) => {
+      if (e.key === "Escape") closeComments();
     };
 
     const box = document.createElement("div");
@@ -2854,8 +2876,7 @@
     closeBtn.onclick = (e) => {
       e.stopPropagation();
       e.preventDefault();
-      if (currentAbortController) currentAbortController.abort();
-      overlay.remove();
+      closeComments();
     };
 
     btnGroup.append(playBtn, apiBtn, closeBtn);
@@ -2896,11 +2917,13 @@
     box.append(topBar, titleBar, content);
     overlay.appendChild(box);
     document.body.appendChild(overlay);
+    overlay.focus();
 
     let allComments = [];
     let pageToken = "";
     let nextPageToken = "";
     let prevStack = [];
+    let _searchDebounce = null;
 
     const load = (pt = "") => {
       content.innerHTML = "";
@@ -2969,7 +2992,7 @@
       let acc = [];
       let localPt = pt;
       const fetchPage = () => {
-        const url = `${COMMENT_API}?part=snippet&videoId=${vid}&maxResults=${Math.min(target - acc.length, 100)}&order=${order}&key=${API_KEY}${localPt ? `&pageToken=${encodeURIComponent(localPt)}` : ""}`;
+        const url = `${COMMENT_API}?part=snippet&videoId=${vid}&maxResults=${Math.min(target - acc.length, 100)}&order=${order}&key=${encodeURIComponent(API_KEY)}${localPt ? `&pageToken=${encodeURIComponent(localPt)}` : ""}`;
         GM_xmlhttpRequest({
           method: "GET",
           url,
@@ -3037,13 +3060,16 @@
 
     document.getElementById("c_search").oninput = (e) => {
       const k = e.target.value.toLowerCase();
-      render(
-        allComments.filter(
-          (c) =>
-          c.text.toLowerCase().includes(k) ||
-          c.plain?.toLowerCase().includes(k),
-        ),
-      );
+      clearTimeout(_searchDebounce);
+      _searchDebounce = setTimeout(() => {
+        render(
+          allComments.filter(
+            (c) =>
+            c.text.toLowerCase().includes(k) ||
+            c.plain?.toLowerCase().includes(k),
+          ),
+        );
+      }, 250);
     };
 
     prevBtn.onclick = () => {
