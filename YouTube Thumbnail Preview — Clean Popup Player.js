@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.0.4
+// @version      1.5.0.6
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -77,6 +77,18 @@
   if (window.self !== window.top) {
     const ID = "embedded-youtube-fix";
 
+    const isOwnPlayer = (() => {
+      try {
+        if (window.name === "ytcpp-own-player") return true;
+        return new URLSearchParams(location.search).get("ytcpp") === "1";
+      } catch (_) {
+        return false;
+      }
+    })();
+    if (isOwnPlayer) {
+      document.documentElement.classList.add("yt-cpp-own");
+    }
+
     const style = document.createElement("style");
     style.textContent = `
     #masthead-container, ytd-masthead, #secondary, #related, #comments,
@@ -94,11 +106,12 @@
     video[style*="top: -"] { top: -9999px !important; }
     .ytp-settings-menu { max-height: 260px !important; overflow-y: auto !important; bottom: 60px !important; z-index: 2147483647 !important; position: absolute !important; pointer-events: auto !important; }
     .ytp-settings-button { pointer-events: auto !important; z-index: 2147483647 !important; }
-    .ytp-unmute { display: none !important; }
     ytd-app, body, html { background: #000 !important; overflow: hidden !important; }
     #page-manager, #columns, #primary, ytd-watch-flexy, #player-container-outer, #player-container-inner { margin: 0 !important; padding: 0 !important; max-width: 100% !important; }
     .html5-video-player { width: 100vw !important; height: 100vh !important; }
     ytd-reel-video-renderer #overlay, ytd-reel-player-overlay-renderer, ytd-reel-player-header-renderer, ytd-shorts-player-controls, ytd-reel-player-endpoint, #shorts-player-controls, ytd-shorts .ytd-reel-player-overlay-renderer, ytd-reel-video-renderer .overlay, #reel-player-overlay-renderer, .ytd-reel-player-overlay-renderer, ytd-shorts-bottom-action-bar-renderer { display: none !important; opacity: 0 !important; pointer-events: none !important; visibility: hidden !important; }
+    
+    .yt-cpp-own .ytp-unmute { display: none !important; }
     `;
     if (document.head) {
       document.head.appendChild(style);
@@ -109,6 +122,7 @@
       rootObserver.observe(document.documentElement, { childList: true });
     }
 
+    if (isOwnPlayer) {
     ["mousedown", "mouseup", "mousemove", "wheel", "keydown", "touchstart"].forEach(evt => {
       window.addEventListener(evt, () => {
         try { window.parent.postMessage("__YT_USER_ACTIVE__", "*"); } catch (_) {}
@@ -188,6 +202,7 @@
     });
     if (document.querySelector("video")) _waitForVideo();
     else _videoWatcher.observe(document.body || document.documentElement, { childList: true, subtree: true });
+    }
 
     const protectMenu = (menu) => {
       if (menu.__ytProtecting) return;
@@ -1432,7 +1447,7 @@
   }
 
   function buildEmbedUrl(videoId, startMuted = false) {
-    return `https://www.youtube.com/shorts/${videoId}?enablejsapi=1&rel=0&modestbranding=1&playsinline=1&theme=dark&autoplay=1${startMuted ? '&mute=1' : ''}`;
+    return `https://www.youtube.com/shorts/${videoId}?enablejsapi=1&rel=0&modestbranding=1&playsinline=1&theme=dark&autoplay=1&ytcpp=1${startMuted ? '&mute=1' : ''}`;
   }
 
   let _activeTransitionDismiss = null;
@@ -1455,7 +1470,7 @@
 
     const settleDelay = Math.max(400, parseInt(getCfg("ytTransitionDelay")) || 600);
 
-    const MAX_WAIT = 10000;
+    const MAX_WAIT = 5000;
     let dismissed = false;
     const session = ++_transitionSession;
 
@@ -1949,6 +1964,7 @@
 `;
     iframe.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture; accelerometer; gyroscope; clipboard-write";
     iframe.loading = "eager";
+    iframe.name = "ytcpp-own-player";
     iframe.src = "about:blank";
 
     const _watchdogAbort = attachIframeWatchdog(iframe, () => {
@@ -2664,6 +2680,7 @@
         opacity: 0; transition: opacity 0.4s ease;
     `;
     iframe.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture; accelerometer; gyroscope; clipboard-write";
+    iframe.name = "ytcpp-own-player";
 
     iframe.src = buildEmbedUrl(videoId, false);
     iframe.onload = () => {
