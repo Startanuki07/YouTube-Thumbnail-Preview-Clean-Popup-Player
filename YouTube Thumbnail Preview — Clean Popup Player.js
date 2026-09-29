@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.0.6
+// @version      1.5.0.8
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -21,6 +21,7 @@
 // @connect      youtube.com
 // @connect      googleapis.com
 // @connect      translate.googleapis.com
+// @connect      sponsor.ajay.app
 // @description        Adds ▶ preview and 💬 comment buttons to YouTube thumbnails; opens a clean, overlay-free popup player. Comments require a YouTube Data API key.
 // @description:zh-TW  為 YouTube 縮圖新增 ▶ 預覽與 💬 留言按鈕，以淨化彈窗播放器播放影片（移除疊加層）。留言功能需自行申請 YouTube Data API 金鑰。
 // @description:zh-CN  为 YouTube 缩略图添加 ▶ 预览和 💬 评论按钮，以净化弹窗播放器播放（移除叠加层）。评论功能需自行申请 YouTube Data API 密钥。
@@ -135,6 +136,7 @@
         if (document.querySelector(".ytp-error")) e.source?.postMessage(ID, e.origin);
         return;
       }
+      if (e.source !== window.parent) return;
       try {
         const data = JSON.parse(e.data);
         const video = document.querySelector("video");
@@ -184,6 +186,7 @@
     };
 
     window.addEventListener("message", (ev) => {
+      if (ev.source !== window.parent) return;
       if (ev.data === "__YT_UNMUTE__") _unmuteVideo();
     });
 
@@ -234,14 +237,7 @@
       closeWatcher.observe(menu, { attributes: true, attributeFilter: ["style"] });
     };
 
-    const menuObserver = new MutationObserver(() => {
-      const menu = document.querySelector(".ytp-settings-menu");
-      if (menu && menu.style.display !== "none") protectMenu(menu);
-    });
-    CleanupManager.addObserver(menuObserver);
-    menuObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
-
-    const dialogObserver = new MutationObserver(() => {
+    const handleDialogGuard = () => {
       const dialog = document.querySelector("tp-yt-paper-toast, yt-notification-action-renderer, yt-confirm-dialog-renderer");
       if (dialog) {
         const closeBtn = dialog.querySelector("#close-button button, #close-button");
@@ -249,9 +245,7 @@
         if (closeBtn) { closeBtn.click(); } else if (btn) { btn.click(); }
         dialog.style.setProperty("display", "none", "important");
       }
-    });
-    CleanupManager.addObserver(dialogObserver);
-    dialogObserver.observe(document.body, { childList: true, subtree: true });
+    };
 
     const OVERLAY_SELECTORS = [
       "ytd-reel-player-overlay-renderer", "ytd-reel-player-header-renderer",
@@ -268,9 +262,15 @@
         el.style.setProperty("display", "none", "important");
       });
     };
-    const overlayObserver = new MutationObserver(forceHideOverlays);
-    CleanupManager.addObserver(overlayObserver);
-    overlayObserver.observe(document.body, { childList: true, subtree: true });
+
+    const guardObserver = new MutationObserver(() => {
+      const menu = document.querySelector(".ytp-settings-menu");
+      if (menu && menu.style.display !== "none") protectMenu(menu);
+      handleDialogGuard();
+      forceHideOverlays();
+    });
+    CleanupManager.addObserver(guardObserver);
+    guardObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
     forceHideOverlays();
 
     let _toastTimer = null;
@@ -337,6 +337,7 @@
     ytTransitionEnabled: false,
     ytTransitionStyle: "scan",
     ytTransitionDelay: 600,
+    ytSponsorBlockEnabled: false,
   };
 
   const getCfg = (key) => {
@@ -1450,6 +1451,38 @@
     return `https://www.youtube.com/shorts/${videoId}?enablejsapi=1&rel=0&modestbranding=1&playsinline=1&theme=dark&autoplay=1&ytcpp=1${startMuted ? '&mute=1' : ''}`;
   }
 
+  const _sponsorSegmentsCache = new Map();
+
+  function fetchSponsorSegments(videoId, cb) {
+    if (_sponsorSegmentsCache.has(videoId)) {
+      cb(_sponsorSegmentsCache.get(videoId));
+      return;
+    }
+    const url = `https://sponsor.ajay.app/api/skipSegments?videoID=${encodeURIComponent(videoId)}&category=sponsor`;
+    GM_xmlhttpRequest({
+      method: "GET",
+      url,
+      onload: (res) => {
+        let segments = [];
+        try {
+          if (res.status === 200) {
+            const json = JSON.parse(res.responseText);
+            segments = Array.isArray(json)
+              ? json.map((s) => ({ start: s.segment[0], end: s.segment[1] }))
+              : [];
+          }
+        } catch (_) {
+          segments = [];
+        }
+        _sponsorSegmentsCache.set(videoId, segments);
+        cb(segments);
+      },
+      onerror: () => {
+        cb([]);
+      },
+    });
+  }
+
   let _activeTransitionDismiss = null;
   let _transitionSession = 0;
   let _activeCanplayHandler = null;
@@ -1493,6 +1526,7 @@
     };
 
     const canplayHandler = (e) => {
+      if (e.origin !== "https://www.youtube.com") return;
       if (e.data !== "__YT_CANPLAY__") return;
       if (_transitionSession !== session) {
         window.removeEventListener("message", canplayHandler);
@@ -2109,6 +2143,7 @@
     }
 
     messageListener = (e) => {
+      if (e.origin !== "https://www.youtube.com") return;
       try {
         const jsonData = JSON.parse(e.data);
         if (jsonData.type === "QUALITY_LIST") {
@@ -2130,6 +2165,7 @@
         qualityBtn.textContent = "…";
         let waitQualityTimer;
         const waitQuality = (ev) => {
+          if (ev.origin !== "https://www.youtube.com") return;
           try {
             const d = JSON.parse(ev.data);
             if (d.type === "QUALITY_LIST") {
@@ -2621,9 +2657,9 @@
     copyBtn.style.cssText = btnBaseCSS + "display:flex; align-items:center; justify-content:center; width:20px; height:20px;";
     copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
       fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <!-- 底層文件（後面那張）-->
+      
       <rect x="8" y="8" width="13" height="13" rx="2"/>
-      <!-- 上層文件（前面那張，左上角缺角折頁效果）-->
+      
       <path d="M3 16V5a2 2 0 0 1 2-2h9"/>
     </svg>`;
     copyBtn.onmouseenter = () => { copyBtn.style.color = "#fff"; copyBtn.style.background = "rgba(62,166,255,0.3)"; };
@@ -3271,7 +3307,7 @@
   function initButtons() {
     const onSearch = window.location.pathname === "/results";
     const targets =
-      "ytd-thumbnail, ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer";
+      "ytd-thumbnail, ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer";
 
     document.querySelectorAll(targets).forEach((el) => {
       const anchor = el.querySelector('a[href*="/watch"], a[href*="/shorts/"]');
