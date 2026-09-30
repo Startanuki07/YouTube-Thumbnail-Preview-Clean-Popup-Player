@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.0.8
+// @version      1.5.1.0
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -22,6 +22,8 @@
 // @connect      googleapis.com
 // @connect      translate.googleapis.com
 // @connect      sponsor.ajay.app
+// 💡 Uses SponsorBlock data licensed under CC BY-NC-SA 4.0 from https://sponsor.ajay.app/.
+// 💡 API attribution per SponsorBlock license — see https://wiki.sponsor.ajay.app/w/API_Docs
 // @description        Adds ▶ preview and 💬 comment buttons to YouTube thumbnails; opens a clean, overlay-free popup player. Comments require a YouTube Data API key.
 // @description:zh-TW  為 YouTube 縮圖新增 ▶ 預覽與 💬 留言按鈕，以淨化彈窗播放器播放影片（移除疊加層）。留言功能需自行申請 YouTube Data API 金鑰。
 // @description:zh-CN  为 YouTube 缩略图添加 ▶ 预览和 💬 评论按钮，以净化弹窗播放器播放（移除叠加层）。评论功能需自行申请 YouTube Data API 密钥。
@@ -130,6 +132,23 @@
       }, { passive: true });
     });
 
+    let _sponsorSegments = [];
+    let _sponsorSkippedUntil = -1;
+    const _sponsorTimeupdateHandler = () => {
+      if (!_sponsorSegments.length) return;
+      const video = document.querySelector("video");
+      if (!video) return;
+      const t = video.currentTime;
+      for (const seg of _sponsorSegments) {
+        if (t >= seg.start && t < seg.end && seg.end !== _sponsorSkippedUntil) {
+          _sponsorSkippedUntil = seg.end;
+          video.currentTime = seg.end;
+          break;
+        }
+      }
+    };
+    document.addEventListener("timeupdate", _sponsorTimeupdateHandler, true);
+
     window.addEventListener("message", (e) => {
       if (e.data === ID) {
         e.stopImmediatePropagation();
@@ -142,6 +161,10 @@
         const video = document.querySelector("video");
         const player = document.getElementById("movie_player");
         if (data.type === "SET_SPEED" && video) video.playbackRate = data.value;
+        if (data.type === "SPONSOR_SEGMENTS" && Array.isArray(data.value)) {
+          _sponsorSegments = data.value;
+          _sponsorSkippedUntil = -1;
+        }
         if (data.type === "GET_QUALITY" && player?.getAvailableQualityLevels) {
           window.parent.postMessage(JSON.stringify({ type: "QUALITY_LIST", levels: player.getAvailableQualityLevels(), current: player.getPlaybackQuality() }), "*");
         }
@@ -413,6 +436,36 @@
       es: "Mostrar botón 💬 Comentarios",
       "pt-BR": "Mostrar botão 💬 Comentários",
       fr: "Afficher le bouton 💬 Commentaires",
+    },
+    sponsorblock: {
+      en: "SponsorBlock",
+      "zh-TW": "SponsorBlock 贊助片段",
+      "zh-CN": "SponsorBlock 赞助片段",
+      ja: "SponsorBlock（スポンサー区間）",
+      ko: "SponsorBlock（스폰서 구간）",
+      es: "SponsorBlock",
+      "pt-BR": "SponsorBlock",
+      fr: "SponsorBlock",
+    },
+    sponsorblock_enable: {
+      en: "Skip sponsor segments",
+      "zh-TW": "跳過贊助片段",
+      "zh-CN": "跳过赞助片段",
+      ja: "スポンサー区間をスキップ",
+      ko: "스폰서 구간 건너뛰기",
+      es: "Omitir segmentos de patrocinio",
+      "pt-BR": "Pular segmentos de patrocínio",
+      fr: "Ignorer les segments sponsorisés",
+    },
+    sponsorblock_hint: {
+      en: "Simplified: sponsor category only, via public SponsorBlock API. Videos without submitted segments are unaffected.",
+      "zh-TW": "簡化版：僅 sponsor（贊助）分類，透過 SponsorBlock 公開 API。未被標記過的影片不受影響。",
+      "zh-CN": "简化版：仅 sponsor（赞助）分类，通过 SponsorBlock 公开 API。未被标记过的视频不受影响。",
+      ja: "簡易版：sponsor（スポンサー）区分のみ、SponsorBlock 公開 API 経由。未登録の動画には影響しません。",
+      ko: "간소화 버전: sponsor(스폰서) 카테고리만, SponsorBlock 공개 API 사용. 제출된 구간이 없는 영상은 영향받지 않습니다.",
+      es: "Simplificado: solo categoría sponsor, vía API pública de SponsorBlock. Los videos sin segmentos enviados no se ven afectados.",
+      "pt-BR": "Simplificado: apenas categoria sponsor, via API pública do SponsorBlock. Vídeos sem segmentos enviados não são afetados.",
+      fr: "Simplifié : catégorie sponsor uniquement, via l'API publique SponsorBlock. Les vidéos sans segments soumis ne sont pas affectées.",
     },
     player_settings: {
       en: "Player Settings (Live)",
@@ -1823,6 +1876,18 @@
         }
 
         iframe.src = targetUrl;
+
+        if (getCfg("ytSponsorBlockEnabled")) {
+          fetchSponsorSegments(videoId, (segments) => {
+            if (iframe.contentWindow) {
+              iframe.contentWindow.postMessage(
+                JSON.stringify({ type: "SPONSOR_SEGMENTS", value: segments }),
+                "*",
+              );
+            }
+          });
+        }
+
         if (overlay._watchdogAbort?.signal.aborted) {
           overlay._watchdogAbort = attachIframeWatchdog(iframe, () => {
             try {
@@ -2391,6 +2456,16 @@
     p.appendChild(_mkRangeRow(txt("v_pos"),        "ytPopupButtonOffset",  0,   200));
     p.appendChild(_mkRangeRow(txt("icon_size"),    "ytPopupSymbolSize",    10,  50));
     p.appendChild(_mkRangeRow(txt("icon_opacity"), "ytPopupSymbolOpacity", 0.1, 1));
+
+    const _cpSbSec = document.createElement("div");
+    _cpSbSec.className = "yt-cp-section";
+    _cpSbSec.textContent = "🛡️ " + txt("sponsorblock");
+    p.appendChild(_cpSbSec);
+    p.appendChild(_mkCheckRow(txt("sponsorblock_enable"), "ytSponsorBlockEnabled"));
+    const _cpSbHint = document.createElement("div");
+    _cpSbHint.style.cssText = "font-size:10px;color:#555;margin:-4px 0 8px;";
+    _cpSbHint.textContent = txt("sponsorblock_hint");
+    p.appendChild(_cpSbHint);
 
     const _cpTransSec = document.createElement("div");
     _cpTransSec.className = "yt-cp-section";
