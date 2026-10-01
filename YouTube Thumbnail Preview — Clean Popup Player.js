@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.1.0
+// @version      1.5.1.2
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -132,17 +132,18 @@
       }, { passive: true });
     });
 
-    let _sponsorSegments = [];
-    let _sponsorSkippedUntil = -1;
+    let _sponsorLastSkipAt = 0;
     const _sponsorTimeupdateHandler = () => {
       if (!_sponsorSegments.length) return;
+      if (performance.now() - _sponsorLastSkipAt < 300) return;
       const video = document.querySelector("video");
       if (!video) return;
       const t = video.currentTime;
+      const maxTime = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : Infinity;
       for (const seg of _sponsorSegments) {
-        if (t >= seg.start && t < seg.end && seg.end !== _sponsorSkippedUntil) {
-          _sponsorSkippedUntil = seg.end;
-          video.currentTime = seg.end;
+        if (t >= seg.start && t < seg.end) {
+          _sponsorLastSkipAt = performance.now();
+          video.currentTime = Math.min(seg.end, maxTime);
           break;
         }
       }
@@ -163,7 +164,6 @@
         if (data.type === "SET_SPEED" && video) video.playbackRate = data.value;
         if (data.type === "SPONSOR_SEGMENTS" && Array.isArray(data.value)) {
           _sponsorSegments = data.value;
-          _sponsorSkippedUntil = -1;
         }
         if (data.type === "GET_QUALITY" && player?.getAvailableQualityLevels) {
           window.parent.postMessage(JSON.stringify({ type: "QUALITY_LIST", levels: player.getAvailableQualityLevels(), current: player.getPlaybackQuality() }), "*");
@@ -1521,7 +1521,14 @@
           if (res.status === 200) {
             const json = JSON.parse(res.responseText);
             segments = Array.isArray(json)
-              ? json.map((s) => ({ start: s.segment[0], end: s.segment[1] }))
+              ? json
+                  .map((s) => ({ start: s.segment?.[0], end: s.segment?.[1] }))
+                  .filter((s) =>
+                    Number.isFinite(s.start) &&
+                    Number.isFinite(s.end) &&
+                    s.start >= 0 &&
+                    s.end > s.start
+                  )
               : [];
           }
         } catch (_) {
