@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.1.2
+// @version      1.5.1.4
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -99,6 +99,7 @@
     tp-yt-paper-toast, yt-notification-action-renderer, yt-confirm-dialog-renderer,
     ytd-single-option-survey-renderer, ytd-upsell-dialog-renderer,
     ytd-mealbar-promo-renderer, ytd-enforcement-message-view-model,
+    snackbar-container,
     #splash-screen, ytd-watch-skeleton, .watch-skeleton, #skeleton,
     .ytp-cards-button, .ytp-cards-teaser, .ytp-cards-button-icon,
     button[aria-label*="カード"], button[aria-label*="Card"],
@@ -1315,6 +1316,13 @@
 
         tp-yt-paper-toast.yt-notification-action-renderer,
         #toast.yt-notification-action-renderer {
+            display: none !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+        }
+
+        snackbar-container {
             display: none !important;
             opacity: 0 !important;
             visibility: hidden !important;
