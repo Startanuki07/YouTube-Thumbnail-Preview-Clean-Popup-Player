@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.1.4
+// @version      1.5.1.5
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -1140,6 +1140,11 @@
         }
         .yt-preview-container:hover .yt-preview-play-btn,
         .yt-preview-container:hover .yt-preview-comment-btn { opacity: 1 !important; }
+        
+        body .yt-preview-container.yt-sfx-hosting .yt-preview-play-btn,
+        body .yt-preview-container.yt-sfx-hosting .yt-preview-comment-btn {
+            opacity: 0 !important; pointer-events: none !important; transition: none !important;
+        }
         .yt-preview-play-btn:active, .yt-preview-comment-btn:active { transform: scale(0.9); }
         #yt-preview-popup { transition: opacity 0.2s ease; }
         #yt-master-control-panel {
@@ -1331,14 +1336,9 @@
     `;
   document.head.appendChild(style);
 
-  const _sfxSize    = Math.max(45, getCfg("ytThumbButtonSize"));
-  const _sfxFont    = Math.max(20, getCfg("ytThumbFontSize"));
-  const _sfxSpacing = getCfg("ytButtonSpacing");
   const _sfxBtnCSS  = `
     position:fixed; z-index:2147483647;
-    width:${_sfxSize}px; height:${_sfxSize}px;
-    font-size:${_sfxFont}px;
-    background:rgba(0,0,0,0.78); color:#fff; border-radius:50%;
+    color:#fff; border-radius:50%;
     display:none; align-items:center; justify-content:center;
     cursor:pointer; pointer-events:auto;
     box-shadow:0 2px 10px rgba(0,0,0,0.8);
@@ -1355,64 +1355,185 @@
   _sfPlay.style.cssText    = _sfxBtnCSS;
   _sfComment.style.cssText = _sfxBtnCSS;
 
+  let _sfxBg = "rgba(0,0,0,0.78)";
   const _sfxHover = (b) => {
     b.addEventListener("mouseenter", () => { b.style.background = "rgba(0,0,0,0.96)"; b.style.transform = "scale(1.12)"; });
-    b.addEventListener("mouseleave", () => { b.style.background = "rgba(0,0,0,0.78)"; b.style.transform = "scale(1)"; });
+    b.addEventListener("mouseleave", () => { b.style.background = _sfxBg; b.style.transform = "scale(1)"; });
   };
   _sfxHover(_sfPlay);
   _sfxHover(_sfComment);
-
-  [_sfPlay, _sfComment].forEach(b => {
-    b.addEventListener("mouseleave", (e) => {
-      if (e.relatedTarget === _sfPlay || e.relatedTarget === _sfComment) return;
-      _sfxHide();
-    });
-  });
 
   document.body.appendChild(_sfPlay);
   document.body.appendChild(_sfComment);
 
   let _sfxAnchor = null;
+  let _sfxZone = null;
+  let _sfxHideTimer = null;
+  let _sfxPx = -1, _sfxPy = -1;
+  let _sfxRaf = 0;
 
   _sfPlay.onclick = (e) => {
+    e.preventDefault();
     e.stopPropagation();
-    if (!_sfxAnchor) return;
-    const vid = getID(_sfxAnchor.href);
+    const a = _sfxAnchor;
+    if (!a) return;
+    const vid = getID(a.href);
     if (!vid) return;
-    if (persistentOverlay) { showPlayer(persistentOverlay, vid, isShorts(_sfxAnchor.href)); }
-    else { persistentOverlay = createPlayer(vid, isShorts(_sfxAnchor.href)); showPlayer(persistentOverlay, vid, isShorts(_sfxAnchor.href)); }
+    const shorts = isShorts(a.href);
+    _sfxHide();
+    if (persistentOverlay) { showPlayer(persistentOverlay, vid, shorts); }
+    else { persistentOverlay = createPlayer(vid, shorts); showPlayer(persistentOverlay, vid, shorts); }
   };
   _sfComment.onclick = (e) => {
+    e.preventDefault();
     e.stopPropagation();
-    if (!_sfxAnchor) return;
-    const vid = getID(_sfxAnchor.href);
-    if (vid) showComments(vid, isShorts(_sfxAnchor.href));
+    const a = _sfxAnchor;
+    if (!a) return;
+    const vid = getID(a.href);
+    if (!vid) return;
+    const shorts = isShorts(a.href);
+    _sfxHide();
+    showComments(vid, shorts);
   };
 
   function _sfxShow(thumbEl, anchor) {
     _sfxAnchor = anchor;
+    const onSearch = window.location.pathname === "/results";
+    const size    = onSearch ? Math.max(45, getCfg("ytThumbButtonSize")) : getCfg("ytThumbButtonSize");
+    const font    = onSearch ? Math.max(20, getCfg("ytThumbFontSize"))   : getCfg("ytThumbFontSize");
+    const spacing = getCfg("ytButtonSpacing");
+    _sfxBg = onSearch ? "rgba(0,0,0,0.78)" : `rgba(0,0,0,${getCfg("ytThumbOpacity")})`;
+
     const r = thumbEl.getBoundingClientRect();
-    _sfPlay.style.top    = (r.top  + 8) + "px";
-    _sfPlay.style.left   = (r.left + 8) + "px";
-    _sfComment.style.top  = (r.top  + 8) + "px";
-    _sfComment.style.left = (r.left + 8 + _sfxSize + _sfxSpacing) + "px";
-    _sfPlay.style.display    = "flex";
-    _sfComment.style.display = "flex";
+    let left = r.left + 8;
+    [[_sfPlay, getCfg("ytShowPlayBtn")], [_sfComment, getCfg("ytShowCommentBtn")]].forEach(([b, enabled]) => {
+      if (!enabled) { b.style.display = "none"; return; }
+      b.style.width      = size + "px";
+      b.style.height     = size + "px";
+      b.style.fontSize   = font + "px";
+      b.style.background = _sfxBg;
+      b.style.transform  = "scale(1)";
+      b.style.top        = (r.top + 8) + "px";
+      b.style.left       = left + "px";
+      b.style.display    = "flex";
+      left += size + spacing;
+    });
+  }
+
+  function _sfxReleaseHost() {
+    if (_sfxZone) _sfxZone.thumbEl.classList.remove("yt-sfx-hosting");
   }
 
   function _sfxHide() {
+    clearTimeout(_sfxHideTimer);
+    _sfxHideTimer = null;
+    _sfxReleaseHost();
+    _sfxZone = null;
     _sfPlay.style.display    = "none";
     _sfComment.style.display = "none";
     _sfxAnchor = null;
   }
 
-  function _applySearchForce() {
-    const onSearch = window.location.pathname === "/results";
-    if (!onSearch) _sfxHide();
+  const _SFX_CARD_SEL   = "ytd-thumbnail, ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer";
+  const _SFX_ANCHOR_SEL = 'a[href*="/watch"], a[href*="/shorts/"]';
+
+  function _sfxResolve(t) {
+    if (!t || !t.closest) return null;
+    const el = t.closest(_SFX_CARD_SEL);
+    if (!el) return null;
+
+    if (window.location.pathname === "/results") {
+      const card = el.closest("ytd-video-renderer");
+      if (!card) return null;
+      const anchor = card.querySelector(_SFX_ANCHOR_SEL);
+      if (!anchor) return null;
+      return { zoneEl: card, thumbEl: card.querySelector("ytd-thumbnail") || card, anchor };
+    }
+
+    if (el.localName !== "ytd-thumbnail" && el.querySelector("ytd-thumbnail")) return null;
+    const anchor = el.querySelector(_SFX_ANCHOR_SEL);
+    if (!anchor) return null;
+    return { zoneEl: el, thumbEl: el, anchor };
   }
 
-  _applySearchForce();
-  CleanupManager.addListener(window, "yt-navigate-finish", _applySearchForce);
+  function _sfxActivate(zone) {
+    if (document.body.classList.contains("yt-panel-open") ||
+        document.body.classList.contains("yt-preview-playing")) return;
+    clearTimeout(_sfxHideTimer);
+    _sfxHideTimer = null;
+    if (_sfxZone && _sfxZone.thumbEl === zone.thumbEl) {
+      _sfxZone = zone;
+      _sfxAnchor = zone.anchor;
+      return;
+    }
+    _sfxReleaseHost();
+    _sfxZone = zone;
+    zone.thumbEl.classList.add("yt-sfx-hosting");
+    _sfxShow(zone.thumbEl, zone.anchor);
+  }
+
+  const _sfxInRect = (r, x, y, pad) =>
+    r.width > 0 && r.height > 0 &&
+    x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+
+  function _sfxPointerInZone(x, y) {
+    if (!_sfxZone) return false;
+    for (const b of [_sfPlay, _sfComment]) {
+      if (b.style.display !== "none" && _sfxInRect(b.getBoundingClientRect(), x, y, 6)) return true;
+    }
+    if (_sfxInRect(_sfxZone.zoneEl.getBoundingClientRect(), x, y, 0)) return true;
+    if (_sfxZone.thumbEl !== _sfxZone.zoneEl &&
+        _sfxInRect(_sfxZone.thumbEl.getBoundingClientRect(), x, y, 0)) return true;
+    const pv = document.querySelector("ytd-video-preview");
+    if (pv && _sfxInRect(pv.getBoundingClientRect(), x, y, 0)) return true;
+    return false;
+  }
+
+  function _sfxCheck() {
+    _sfxRaf = 0;
+    if (!_sfxZone) return;
+    if (_sfxPointerInZone(_sfxPx, _sfxPy)) {
+      clearTimeout(_sfxHideTimer);
+      _sfxHideTimer = null;
+    } else if (!_sfxHideTimer) {
+      _sfxHideTimer = setTimeout(() => {
+        _sfxHideTimer = null;
+        if (_sfxZone && !_sfxPointerInZone(_sfxPx, _sfxPy)) _sfxHide();
+      }, 250);
+    }
+  }
+
+  CleanupManager.addListener(document, "mousemove", (e) => {
+    _sfxPx = e.clientX;
+    _sfxPy = e.clientY;
+    if (_sfxZone && !_sfxRaf) _sfxRaf = requestAnimationFrame(_sfxCheck);
+  }, { passive: true, capture: true });
+
+  CleanupManager.addListener(document, "mouseover", (e) => {
+    _sfxPx = e.clientX;
+    _sfxPy = e.clientY;
+    const t = e.target;
+    if (t === _sfPlay || t === _sfComment || (_sfxZone && _sfxZone.zoneEl.contains(t))) {
+      clearTimeout(_sfxHideTimer);
+      _sfxHideTimer = null;
+      return;
+    }
+    const zone = _sfxResolve(t);
+    if (zone) { _sfxActivate(zone); return; }
+    if (_sfxZone && !_sfxRaf) _sfxRaf = requestAnimationFrame(_sfxCheck);
+  }, { passive: true, capture: true });
+
+  CleanupManager.addListener(document, "mouseout", (e) => {
+    if (e.relatedTarget === null && _sfxZone) {
+      _sfxPx = -1;
+      _sfxPy = -1;
+      _sfxCheck();
+    }
+  }, { passive: true });
+
+  CleanupManager.addListener(window, "scroll", () => { if (_sfxZone) _sfxHide(); }, { passive: true, capture: true });
+
+  CleanupManager.addListener(window, "yt-navigate-finish", _sfxHide);
 
   CleanupManager.addListener(window, "yt-navigate-finish", () => {
     if (!document.getElementById("yt-master-control-panel")) {
@@ -3414,17 +3535,6 @@
 
       const container = card.querySelector("ytd-thumbnail") || card;
       if (container.offsetWidth > 0) addButtons(container, anchor);
-
-      if (card.dataset.sfxReady) return;
-      card.dataset.sfxReady = "1";
-
-      const thumb = card.querySelector("ytd-thumbnail") || card;
-
-      card.addEventListener("mouseenter", () => _sfxShow(thumb, anchor));
-      card.addEventListener("mouseleave", (e) => {
-        if (e.relatedTarget === _sfPlay || e.relatedTarget === _sfComment) return;
-        _sfxHide();
-      });
     });
   }
 
