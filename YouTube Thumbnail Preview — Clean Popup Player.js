@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.1.5
+// @version      1.5.1.11
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -127,17 +127,90 @@
     }
 
     if (isOwnPlayer) {
-    ["mousedown", "mouseup", "mousemove", "wheel", "keydown", "touchstart"].forEach(evt => {
-      window.addEventListener(evt, () => {
-        try { window.parent.postMessage("__YT_USER_ACTIVE__", "*"); } catch (_) {}
-      }, { passive: true });
-    });
 
+    let _sponsorSegments = [];
+    let _sponsorVideoId = null;
+    let _sponsorNotify = true;
+    let _sponsorTest = false;
     let _sponsorLastSkipAt = 0;
-    const _sponsorTimeupdateHandler = () => {
+
+    const _sbCurrentVideoId = () => {
+      try {
+        const m = location.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]{6,})/);
+        return m ? m[1] : new URLSearchParams(location.search).get("v");
+      } catch (_) { return null; }
+    };
+    const _sbFmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+    let _sbToastEl = null;
+    let _sbToastTimer = null;
+    const SB_NOTICE_SEEN_KEY = "ytSbNoticeSeen";
+    const _sbNoticeSeen = () => { try { return !!GM_getValue(SB_NOTICE_SEEN_KEY, false); } catch (_) { return true; } };
+    const _sbToast = (text, ms = 2400, opts) => {
+      try {
+        if (!document.body) return;
+        const persistent = !!(opts && opts.persistent) && !_sbNoticeSeen();
+        if (!_sbToastEl || !_sbToastEl.isConnected) {
+          _sbToastEl = document.createElement("div");
+          _sbToastEl.id = "yt-cpp-sb-toast";
+          _sbToastEl.style.cssText = `
+            position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+            background: rgba(20, 20, 20, 0.72); color: #fff; padding: 6px 14px;
+            border-radius: 8px; font-size: 12px; font-weight: 500; max-width: 90vw;
+            backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            z-index: 2147483647; opacity: 0;
+            transition: opacity 0.25s ease; white-space: nowrap;
+            overflow: hidden; text-overflow: ellipsis;
+            display: flex; align-items: center; gap: 8px;
+          `;
+          document.body.appendChild(_sbToastEl);
+        }
+        _sbToastEl.textContent = "";
+        _sbToastEl.style.pointerEvents = persistent ? "auto" : "none";
+        _sbToastEl.style.whiteSpace = persistent ? "normal" : "nowrap";
+        _sbToastEl.style.maxWidth = persistent ? "360px" : "90vw";
+        const textSpan = document.createElement("span");
+        textSpan.textContent = text;
+        textSpan.style.cssText = persistent
+          ? "overflow-wrap:break-word;"
+          : "overflow:hidden;text-overflow:ellipsis;";
+        _sbToastEl.appendChild(textSpan);
+        if (persistent) {
+          const closeBtn = document.createElement("span");
+          closeBtn.textContent = "✕";
+          closeBtn.setAttribute("role", "button");
+          closeBtn.setAttribute("aria-label", "Dismiss");
+          closeBtn.style.cssText = `
+            flex-shrink: 0; cursor: pointer; opacity: 0.7; font-size: 13px;
+            line-height: 1; padding: 2px 2px 2px 4px;
+          `;
+          closeBtn.onmouseenter = () => { closeBtn.style.opacity = "1"; };
+          closeBtn.onmouseleave = () => { closeBtn.style.opacity = "0.7"; };
+          closeBtn.onclick = (e) => {
+            e.stopPropagation();
+            try { GM_setValue(SB_NOTICE_SEEN_KEY, true); } catch (_) {}
+            clearTimeout(_sbToastTimer);
+            if (_sbToastEl) _sbToastEl.style.opacity = "0";
+          };
+          _sbToastEl.appendChild(closeBtn);
+        }
+        _sbToastEl.style.opacity = "0";
+        void _sbToastEl.offsetWidth;
+        _sbToastEl.style.opacity = "1";
+        clearTimeout(_sbToastTimer);
+        if (!persistent) {
+          _sbToastTimer = setTimeout(() => { if (_sbToastEl) _sbToastEl.style.opacity = "0"; }, ms);
+        }
+      } catch (_) {}
+    };
+
+    const _sponsorTimeupdateHandler = (ev) => {
       if (!_sponsorSegments.length) return;
       if (performance.now() - _sponsorLastSkipAt < 300) return;
-      const video = document.querySelector("video");
+      const curId = _sbCurrentVideoId();
+      if (_sponsorVideoId && curId && curId !== _sponsorVideoId) return;
+      const video = ev && ev.target && ev.target.tagName === "VIDEO" ? ev.target : document.querySelector("video");
       if (!video) return;
       const t = video.currentTime;
       const maxTime = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : Infinity;
@@ -145,6 +218,14 @@
         if (t >= seg.start && t < seg.end) {
           _sponsorLastSkipAt = performance.now();
           video.currentTime = Math.min(seg.end, maxTime);
+          if (_sponsorNotify) {
+            try {
+              window.parent.postMessage(JSON.stringify({
+                type: "SB_SKIPPED",
+                text: `⏭ ${_sponsorTest ? "[TEST] " : ""}Skipped sponsor ${_sbFmt(seg.start)} → ${_sbFmt(seg.end)}`,
+              }), "*");
+            } catch (_) {}
+          }
           break;
         }
       }
@@ -164,7 +245,26 @@
         const player = document.getElementById("movie_player");
         if (data.type === "SET_SPEED" && video) video.playbackRate = data.value;
         if (data.type === "SPONSOR_SEGMENTS" && Array.isArray(data.value)) {
+          const curId = _sbCurrentVideoId();
+          if (data.videoId && curId && data.videoId !== curId) return;
           _sponsorSegments = data.value;
+          _sponsorVideoId = data.videoId || curId || null;
+          _sponsorNotify = data.notify !== false;
+          _sponsorTest = data.status === "test";
+          _sponsorLastSkipAt = 0;
+          if (_sponsorNotify) {
+            const n = data.value.length;
+            if (data.status === "test" && n) {
+              _sbToast(`🧪 SponsorBlock TEST: fake segment ${_sbFmt(data.value[0].start)}–${_sbFmt(data.value[0].end)} active`, 3500);
+            } else if (data.status === "ok" && n) {
+              const total = Math.round(data.value.reduce((sum, s) => sum + (s.end - s.start), 0));
+              _sbToast(`🛡️ SponsorBlock: ${n} sponsor segment${n > 1 ? "s" : ""} (${total}s) will be skipped automatically — no action needed`, 3500, { persistent: true });
+            } else if (data.status === "none") {
+              _sbToast("🛡️ SponsorBlock: no segments for this video", 3000);
+            } else if (data.status === "error") {
+              _sbToast(`🛡️ SponsorBlock: API unavailable${data.http ? ` (HTTP ${data.http})` : ""}`, 3500);
+            }
+          }
         }
         if (data.type === "GET_QUALITY" && player?.getAvailableQualityLevels) {
           window.parent.postMessage(JSON.stringify({ type: "QUALITY_LIST", levels: player.getAvailableQualityLevels(), current: player.getPlaybackQuality() }), "*");
@@ -195,6 +295,10 @@
         }
       } catch (err) {}
     });
+
+    try {
+      window.parent.postMessage(JSON.stringify({ type: "SB_READY", videoId: _sbCurrentVideoId() }), "*");
+    } catch (_) {}
 
     const _unmuteVideo = () => {
       const v = document.querySelector("video");
@@ -287,11 +391,16 @@
       });
     };
 
+    let _menuEl = null, _guardRaf = 0;
     const guardObserver = new MutationObserver(() => {
-      const menu = document.querySelector(".ytp-settings-menu");
-      if (menu && menu.style.display !== "none") protectMenu(menu);
-      handleDialogGuard();
-      forceHideOverlays();
+      if (!_menuEl || !_menuEl.isConnected) _menuEl = document.querySelector(".ytp-settings-menu");
+      if (_menuEl && _menuEl.style.display !== "none") protectMenu(_menuEl);
+      if (_guardRaf) return;
+      _guardRaf = requestAnimationFrame(() => {
+        _guardRaf = 0;
+        handleDialogGuard();
+        forceHideOverlays();
+      });
     });
     CleanupManager.addObserver(guardObserver);
     guardObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
@@ -362,6 +471,8 @@
     ytTransitionStyle: "scan",
     ytTransitionDelay: 600,
     ytSponsorBlockEnabled: false,
+    ytSponsorBlockNotify: true,
+    ytSponsorBlockTestMode: false,
   };
 
   const getCfg = (key) => {
@@ -459,14 +570,44 @@
       fr: "Ignorer les segments sponsorisés",
     },
     sponsorblock_hint: {
-      en: "Simplified: sponsor category only, via public SponsorBlock API. Videos without submitted segments are unaffected.",
-      "zh-TW": "簡化版：僅 sponsor（贊助）分類，透過 SponsorBlock 公開 API。未被標記過的影片不受影響。",
-      "zh-CN": "简化版：仅 sponsor（赞助）分类，通过 SponsorBlock 公开 API。未被标记过的视频不受影响。",
-      ja: "簡易版：sponsor（スポンサー）区分のみ、SponsorBlock 公開 API 経由。未登録の動画には影響しません。",
-      ko: "간소화 버전: sponsor(스폰서) 카테고리만, SponsorBlock 공개 API 사용. 제출된 구간이 없는 영상은 영향받지 않습니다.",
-      es: "Simplificado: solo categoría sponsor, vía API pública de SponsorBlock. Los videos sin segmentos enviados no se ven afectados.",
-      "pt-BR": "Simplificado: apenas categoria sponsor, via API pública do SponsorBlock. Vídeos sem segmentos enviados não são afetados.",
-      fr: "Simplifié : catégorie sponsor uniquement, via l'API publique SponsorBlock. Les vidéos sans segments soumis ne sont pas affectées.",
+      en: "Fully automatic — segments are skipped as playback reaches them, no action needed. Simplified: sponsor category only, via public SponsorBlock API. Videos without submitted segments are unaffected.",
+      "zh-TW": "完全自動：播放到片段時會自動跳過，不需要你做任何操作。簡化版：僅 sponsor（贊助）分類，透過 SponsorBlock 公開 API。未被標記過的影片不受影響。",
+      "zh-CN": "完全自动：播放到片段时会自动跳过，无需你做任何操作。简化版：仅 sponsor（赞助）分类，通过 SponsorBlock 公开 API。未被标记过的视频不受影响。",
+      ja: "完全自動：再生がその区間に達すると自動的にスキップされ、操作は不要です。簡易版：sponsor（スポンサー）区分のみ、SponsorBlock 公開 API 経由。未登録の動画には影響しません。",
+      ko: "완전 자동: 재생이 해당 구간에 도달하면 자동으로 건너뛰며, 별도 조작이 필요 없습니다. 간소화 버전: sponsor(스폰서) 카테고리만, SponsorBlock 공개 API 사용. 제출된 구간이 없는 영상은 영향받지 않습니다.",
+      es: "Totalmente automático: los segmentos se omiten al llegar a ellos, sin necesidad de acción. Simplificado: solo categoría sponsor, vía API pública de SponsorBlock. Los videos sin segmentos enviados no se ven afectados.",
+      "pt-BR": "Totalmente automático: os segmentos são pulados ao serem alcançados, sem necessidade de ação. Simplificado: apenas categoria sponsor, via API pública do SponsorBlock. Vídeos sem segmentos enviados não são afetados.",
+      fr: "Entièrement automatique : les segments sont ignorés dès qu'ils sont atteints, aucune action requise. Simplifié : catégorie sponsor uniquement, via l'API publique SponsorBlock. Les vidéos sans segments soumis ne sont pas affectées.",
+    },
+    sponsorblock_notify: {
+      en: "Show SponsorBlock notices",
+      "zh-TW": "顯示 SponsorBlock 提示",
+      "zh-CN": "显示 SponsorBlock 提示",
+      ja: "SponsorBlock の通知を表示",
+      ko: "SponsorBlock 알림 표시",
+      es: "Mostrar avisos de SponsorBlock",
+      "pt-BR": "Mostrar avisos do SponsorBlock",
+      fr: "Afficher les notifications SponsorBlock",
+    },
+    sponsorblock_test: {
+      en: "🧪 Test mode (fake segment)",
+      "zh-TW": "🧪 測試模式（假片段）",
+      "zh-CN": "🧪 测试模式（假片段）",
+      ja: "🧪 テストモード（疑似区間）",
+      ko: "🧪 테스트 모드(가짜 구간)",
+      es: "🧪 Modo de prueba (segmento falso)",
+      "pt-BR": "🧪 Modo de teste (segmento falso)",
+      fr: "🧪 Mode test (faux segment)",
+    },
+    sponsorblock_test_hint: {
+      en: "Injects a fake sponsor segment (0:03–0:06) into every video, so you can verify skipping works without finding a flagged video. Turn it off when done.",
+      "zh-TW": "在每部影片注入一段假的贊助片段（0:03–0:06），不必找到已被標記的影片，就能驗證跳過功能是否運作。測試完請記得關閉。",
+      "zh-CN": "在每个视频注入一段假的赞助片段（0:03–0:06），无需找到已被标记的视频，就能验证跳过功能是否正常。测试完请记得关闭。",
+      ja: "すべての動画に疑似スポンサー区間（0:03–0:06）を挿入し、登録済みの動画を探さなくてもスキップ動作を確認できます。確認後はオフにしてください。",
+      ko: "모든 영상에 가짜 스폰서 구간(0:03–0:06)을 삽입해, 표시된 영상을 찾지 않아도 건너뛰기가 작동하는지 확인할 수 있습니다. 확인 후 꺼 주세요.",
+      es: "Inserta un segmento de patrocinio falso (0:03–0:06) en cada video para comprobar que la omisión funciona sin buscar un video marcado. Desactívalo al terminar.",
+      "pt-BR": "Insere um segmento de patrocínio falso (0:03–0:06) em cada vídeo para verificar se o salto funciona sem precisar achar um vídeo marcado. Desative ao terminar.",
+      fr: "Insère un faux segment sponsorisé (0:03–0:06) dans chaque vidéo pour vérifier que l'ignorance fonctionne sans chercher une vidéo marquée. Désactivez-le une fois terminé.",
     },
     player_settings: {
       en: "Player Settings (Live)",
@@ -1588,7 +1729,7 @@
       playBtn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const liveAnchor = container._sfxAnchor;
+        const liveAnchor = container.querySelector(_SFX_ANCHOR_SEL) || container._sfxAnchor;
         const clickVid = getID(liveAnchor?.href);
         const clickShorts = isShorts(liveAnchor?.href);
         if (!clickVid) return;
@@ -1606,7 +1747,7 @@
       commentBtn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const liveAnchor = container._sfxAnchor;
+        const liveAnchor = container.querySelector(_SFX_ANCHOR_SEL) || container._sfxAnchor;
         const vid = getID(liveAnchor?.href);
         if (vid) showComments(vid, isShorts(liveAnchor?.href));
       };
@@ -1634,43 +1775,150 @@
   }
 
   const _sponsorSegmentsCache = new Map();
+  const _sponsorInflight = new Map();
+
+  function _normalizeSponsorSegments(json) {
+    if (!Array.isArray(json)) return [];
+    const list = json
+      .filter((s) => (!s?.actionType || s.actionType === "skip") && (!s?.category || s.category === "sponsor"))
+      .map((s) => ({ start: s?.segment?.[0], end: s?.segment?.[1] }))
+      .filter((s) =>
+        Number.isFinite(s.start) &&
+        Number.isFinite(s.end) &&
+        s.start >= 0 &&
+        s.end > s.start
+      )
+      .sort((a, b) => a.start - b.start);
+    const merged = [];
+    for (const s of list) {
+      const last = merged[merged.length - 1];
+      if (last && s.start <= last.end) last.end = Math.max(last.end, s.end);
+      else merged.push({ start: s.start, end: s.end });
+    }
+    return merged;
+  }
 
   function fetchSponsorSegments(videoId, cb) {
     if (_sponsorSegmentsCache.has(videoId)) {
-      cb(_sponsorSegmentsCache.get(videoId));
+      const segments = _sponsorSegmentsCache.get(videoId);
+      cb({ segments, status: segments.length ? "ok" : "none", http: 0 });
       return;
     }
+    if (_sponsorInflight.has(videoId)) {
+      _sponsorInflight.get(videoId).push(cb);
+      return;
+    }
+    _sponsorInflight.set(videoId, [cb]);
+
+    const done = (result) => {
+      const cbs = _sponsorInflight.get(videoId) || [];
+      _sponsorInflight.delete(videoId);
+      console.info(`[YTCPP-SB] ${videoId}: ${result.status}${result.http ? ` (HTTP ${result.http})` : ""}, ${result.segments.length} segment(s)`);
+      cbs.forEach((fn) => { try { fn(result); } catch (_) {} });
+    };
+    const fail = (http) => done({ segments: [], status: "error", http });
+
     const url = `https://sponsor.ajay.app/api/skipSegments?videoID=${encodeURIComponent(videoId)}&category=sponsor`;
-    GM_xmlhttpRequest({
-      method: "GET",
-      url,
-      onload: (res) => {
-        let segments = [];
-        try {
-          if (res.status === 200) {
-            const json = JSON.parse(res.responseText);
-            segments = Array.isArray(json)
-              ? json
-                  .map((s) => ({ start: s.segment?.[0], end: s.segment?.[1] }))
-                  .filter((s) =>
-                    Number.isFinite(s.start) &&
-                    Number.isFinite(s.end) &&
-                    s.start >= 0 &&
-                    s.end > s.start
-                  )
-              : [];
+    try {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        timeout: 8000,
+        onload: (res) => {
+          if (res.status === 404) {
+            _sponsorSegmentsCache.set(videoId, []);
+            done({ segments: [], status: "none", http: 404 });
+            return;
           }
-        } catch (_) {
-          segments = [];
-        }
-        _sponsorSegmentsCache.set(videoId, segments);
-        cb(segments);
-      },
-      onerror: () => {
-        cb([]);
-      },
-    });
+          if (res.status !== 200) { fail(res.status); return; }
+          let segments;
+          try {
+            segments = _normalizeSponsorSegments(JSON.parse(res.responseText));
+          } catch (_) {
+            fail(200);
+            return;
+          }
+          _sponsorSegmentsCache.set(videoId, segments);
+          done({ segments, status: segments.length ? "ok" : "none", http: 200 });
+        },
+        onerror: () => fail(0),
+        ontimeout: () => fail(0),
+        onabort: () => fail(0),
+      });
+    } catch (_) {
+      fail(0);
+    }
   }
+
+  let _sbPageToastEl = null;
+  let _sbPageToastTimer = null;
+  const _sbPageToast = (text, ms = 2400) => {
+    try {
+      if (!document.body) return;
+      if (!_sbPageToastEl || !_sbPageToastEl.isConnected) {
+        _sbPageToastEl = document.createElement("div");
+        _sbPageToastEl.id = "yt-cpp-sb-page-toast";
+        _sbPageToastEl.style.cssText = `
+          position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+          background: rgba(20, 20, 20, 0.72); color: #fff; padding: 6px 14px;
+          border-radius: 8px; font-size: 12px; font-weight: 500; max-width: 90vw;
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          z-index: 2147483647; pointer-events: none; opacity: 0;
+          transition: opacity 0.25s ease; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis;
+        `;
+        document.body.appendChild(_sbPageToastEl);
+      }
+      _sbPageToastEl.textContent = text;
+      _sbPageToastEl.style.opacity = "0";
+      void _sbPageToastEl.offsetWidth;
+      _sbPageToastEl.style.opacity = "1";
+      clearTimeout(_sbPageToastTimer);
+      _sbPageToastTimer = setTimeout(() => { if (_sbPageToastEl) _sbPageToastEl.style.opacity = "0"; }, ms);
+    } catch (_) {}
+  };
+
+  function _replySponsorSegments(target, videoId) {
+    const send = (segments, status, http = 0) => {
+      try {
+        target.postMessage(
+          JSON.stringify({
+            type: "SPONSOR_SEGMENTS",
+            videoId,
+            value: segments,
+            status,
+            http,
+            notify: !!getCfg("ytSponsorBlockNotify"),
+          }),
+          "*",
+        );
+      } catch (_) {}
+    };
+    if (!getCfg("ytSponsorBlockEnabled")) { send([], "disabled"); return; }
+    if (getCfg("ytSponsorBlockTestMode")) { send([{ start: 3, end: 6 }], "test"); return; }
+    fetchSponsorSegments(videoId, (r) => send(r.segments, r.status, r.http));
+  }
+
+  const _sponsorReadyHandler = (e) => {
+    const frame = persistentOverlay?.querySelector("iframe");
+    if (!frame || e.source !== frame.contentWindow) return;
+    let data;
+    try { data = JSON.parse(e.data); } catch (_) { return; }
+    if (!data || !data.type) return;
+    if (data.type === "SB_SKIPPED") {
+      if (typeof data.text === "string" && data.text) _sbPageToast(data.text);
+      return;
+    }
+    if (data.type !== "SB_READY") return;
+    let videoId = String(data.videoId || "");
+    if (!/^[\w-]{6,20}$/.test(videoId)) {
+      try { videoId = new URL(frame.src).pathname.split("/")[2] || ""; } catch (_) { videoId = ""; }
+      if (!/^[\w-]{6,20}$/.test(videoId)) return;
+    }
+    _replySponsorSegments(e.source, videoId);
+  };
+  CleanupManager.addListener(window, "message", _sponsorReadyHandler);
 
   let _activeTransitionDismiss = null;
   let _transitionSession = 0;
@@ -2013,15 +2261,8 @@
 
         iframe.src = targetUrl;
 
-        if (getCfg("ytSponsorBlockEnabled")) {
-          fetchSponsorSegments(videoId, (segments) => {
-            if (iframe.contentWindow) {
-              iframe.contentWindow.postMessage(
-                JSON.stringify({ type: "SPONSOR_SEGMENTS", value: segments }),
-                "*",
-              );
-            }
-          });
+        if (getCfg("ytSponsorBlockEnabled") && !getCfg("ytSponsorBlockTestMode")) {
+          fetchSponsorSegments(videoId, () => {});
         }
 
         if (overlay._watchdogAbort?.signal.aborted) {
@@ -2147,6 +2388,7 @@
       clearInterval(timer);
       const idx = CleanupManager.timers.indexOf(timer);
       if (idx !== -1) CleanupManager.timers.splice(idx, 1);
+      CleanupManager.removeListener(window, "message", onMessage);
     }, { once: true });
 
     return watchdogAbort;
@@ -2602,6 +2844,7 @@
     _cpSbHint.style.cssText = "font-size:10px;color:#555;margin:-4px 0 8px;";
     _cpSbHint.textContent = txt("sponsorblock_hint");
     p.appendChild(_cpSbHint);
+    p.appendChild(_mkCheckRow(txt("sponsorblock_notify"), "ytSponsorBlockNotify"));
 
     const _cpTransSec = document.createElement("div");
     _cpTransSec.className = "yt-cp-section";
@@ -3385,7 +3628,7 @@
     const nodes = container.querySelectorAll(".c_text");
     if (nodes.length === 0) return;
 
-    Promise.allSettled(Array.from(nodes).map(async (node) => {
+    const translateOne = async (node) => {
       const text = node.textContent;
       if (!text.trim()) return;
 
@@ -3420,7 +3663,19 @@
         if (error.name === "AbortError") return;
         console.error("Translation error:", error);
       }
-    })).catch(console.error);
+    };
+
+    const TRANSLATE_CONCURRENCY = 6;
+    const list = Array.from(nodes);
+    let nextIdx = 0;
+    const worker = async () => {
+      while (nextIdx < list.length && !signal.aborted) {
+        await translateOne(list[nextIdx++]);
+      }
+    };
+    Promise.allSettled(
+      Array.from({ length: Math.min(TRANSLATE_CONCURRENCY, list.length) }, worker),
+    ).catch(console.error);
   }
 
   function showApiKeyPrompt(vid) {
@@ -3521,19 +3776,18 @@
       "ytd-thumbnail, ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer";
 
     document.querySelectorAll(targets).forEach((el) => {
-      const anchor = el.querySelector('a[href*="/watch"], a[href*="/shorts/"]');
-      if (!anchor) return;
-
+      let container;
       if (!onSearch) {
-        const container = el.querySelector("ytd-thumbnail") || el;
-        if (container.offsetWidth > 0) addButtons(container, anchor);
-        return;
+        container = el.querySelector("ytd-thumbnail") || el;
+      } else {
+        const card = el.closest("ytd-video-renderer");
+        if (!card) return;
+        container = card.querySelector("ytd-thumbnail") || card;
       }
+      if (container.dataset.previewReady) return;
 
-      const card = el.closest("ytd-video-renderer");
-      if (!card) return;
-
-      const container = card.querySelector("ytd-thumbnail") || card;
+      const anchor = el.querySelector(_SFX_ANCHOR_SEL);
+      if (!anchor) return;
       if (container.offsetWidth > 0) addButtons(container, anchor);
     });
   }
