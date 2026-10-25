@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.5.1.11
+// @version      1.6.0.0
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -114,7 +114,6 @@
     #page-manager, #columns, #primary, ytd-watch-flexy, #player-container-outer, #player-container-inner { margin: 0 !important; padding: 0 !important; max-width: 100% !important; }
     .html5-video-player { width: 100vw !important; height: 100vh !important; }
     ytd-reel-video-renderer #overlay, ytd-reel-player-overlay-renderer, ytd-reel-player-header-renderer, ytd-shorts-player-controls, ytd-reel-player-endpoint, #shorts-player-controls, ytd-shorts .ytd-reel-player-overlay-renderer, ytd-reel-video-renderer .overlay, #reel-player-overlay-renderer, .ytd-reel-player-overlay-renderer, ytd-shorts-bottom-action-bar-renderer { display: none !important; opacity: 0 !important; pointer-events: none !important; visibility: hidden !important; }
-    
     .yt-cpp-own .ytp-unmute { display: none !important; }
     `;
     if (document.head) {
@@ -133,6 +132,58 @@
     let _sponsorNotify = true;
     let _sponsorTest = false;
     let _sponsorLastSkipAt = 0;
+
+    let _sponsorMarkerObserver = null;
+    const _clearSponsorMarkers = () => {
+      try {
+        document.querySelectorAll(".yt-cpp-sb-marker").forEach((el) => el.remove());
+      } catch (_) {}
+    };
+    const _sbDefaultMarkerRgba = "rgba(255, 170, 0, 0.55)";
+    const _hexToRgba = (hex, alpha) => {
+      const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(String(hex || ""));
+      if (!m) return _sbDefaultMarkerRgba;
+      const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    };
+    const _paintSponsorMarkers = (segments, markerColor) => {
+      try {
+        const container = document.querySelector(".ytp-progress-bar-container");
+        const bar = document.querySelector(".ytp-progress-bar");
+        if (!container || !bar) return false;
+        const totalStr = bar.getAttribute("aria-valuemax");
+        const total = totalStr ? Number(totalStr) : NaN;
+        if (!Number.isFinite(total) || total <= 0) return false;
+        _clearSponsorMarkers();
+        const bg = _hexToRgba(markerColor, 0.55);
+        for (const seg of segments) {
+          if (!(seg.end > seg.start)) continue;
+          const startPct = Math.max(0, Math.min(100, (seg.start / total) * 100));
+          const widthPct = Math.max(0, Math.min(100 - startPct, ((seg.end - seg.start) / total) * 100));
+          const marker = document.createElement("div");
+          marker.className = "yt-cpp-sb-marker";
+          marker.style.cssText = `
+            position: absolute; top: 0; bottom: 0; left: ${startPct}%; width: ${widthPct}%;
+            background: ${bg}; pointer-events: none; z-index: 45;
+            border-radius: 1px;
+          `;
+          container.appendChild(marker);
+        }
+        return true;
+      } catch (_) { return false; }
+    };
+    const _renderSponsorMarkers = (segments, markerColor) => {
+      if (_sponsorMarkerObserver) { _sponsorMarkerObserver.disconnect(); _sponsorMarkerObserver = null; }
+      if (!segments.length) { _clearSponsorMarkers(); return; }
+      if (_paintSponsorMarkers(segments, markerColor)) return;
+      _sponsorMarkerObserver = new MutationObserver(() => {
+        if (_paintSponsorMarkers(segments, markerColor)) {
+          _sponsorMarkerObserver.disconnect();
+          _sponsorMarkerObserver = null;
+        }
+      });
+      _sponsorMarkerObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
+    };
 
     const _sbCurrentVideoId = () => {
       try {
@@ -252,13 +303,19 @@
           _sponsorNotify = data.notify !== false;
           _sponsorTest = data.status === "test";
           _sponsorLastSkipAt = 0;
+          _renderSponsorMarkers(_sponsorSegments, data.markerColor);
           if (_sponsorNotify) {
             const n = data.value.length;
             if (data.status === "test" && n) {
               _sbToast(`🧪 SponsorBlock TEST: fake segment ${_sbFmt(data.value[0].start)}–${_sbFmt(data.value[0].end)} active`, 3500);
             } else if (data.status === "ok" && n) {
               const total = Math.round(data.value.reduce((sum, s) => sum + (s.end - s.start), 0));
-              _sbToast(`🛡️ SponsorBlock: ${n} sponsor segment${n > 1 ? "s" : ""} (${total}s) will be skipped automatically — no action needed`, 3500, { persistent: true });
+              const noticeText = `🛡️ SponsorBlock: ${n} sponsor segment${n > 1 ? "s" : ""} (${total}s) will be skipped automatically — no action needed`;
+              if (_sbNoticeSeen()) {
+                try { window.parent.postMessage(JSON.stringify({ type: "SB_NOTICE", text: noticeText }), "*"); } catch (_) {}
+              } else {
+                _sbToast(noticeText, 3500, { persistent: true });
+              }
             } else if (data.status === "none") {
               _sbToast("🛡️ SponsorBlock: no segments for this video", 3000);
             } else if (data.status === "error") {
@@ -473,6 +530,7 @@
     ytSponsorBlockEnabled: false,
     ytSponsorBlockNotify: true,
     ytSponsorBlockTestMode: false,
+    ytSponsorBlockMarkerColor: "#ffaa00",
   };
 
   const getCfg = (key) => {
@@ -588,6 +646,26 @@
       es: "Mostrar avisos de SponsorBlock",
       "pt-BR": "Mostrar avisos do SponsorBlock",
       fr: "Afficher les notifications SponsorBlock",
+    },
+    sponsorblock_marker_color: {
+      en: "Marked segment color",
+      "zh-TW": "已標記片段顏色",
+      "zh-CN": "已标记片段颜色",
+      ja: "マーク区間の色",
+      ko: "표시된 구간 색상",
+      es: "Color del segmento marcado",
+      "pt-BR": "Cor do segmento marcado",
+      fr: "Couleur du segment marqué",
+    },
+    sponsorblock_marker_color_hint: {
+      en: "Color of the sponsor segment overlay on the progress bar. Opacity is fixed; only the hue is customizable.",
+      "zh-TW": "進度條上贊助片段色塊的顏色。透明度固定不可調，僅色相可自訂。",
+      "zh-CN": "进度条上赞助片段色块的颜色。透明度固定不可调，仅色相可自定义。",
+      ja: "再生バー上のスポンサー区間オーバーレイの色です。不透明度は固定で、色相のみ変更できます。",
+      ko: "재생바에 표시되는 스폰서 구간 오버레이 색상입니다. 불투명도는 고정이며 색상만 바꿀 수 있습니다.",
+      es: "Color de la superposición del segmento de patrocinio en la barra de progreso. La opacidad es fija; solo se puede personalizar el tono.",
+      "pt-BR": "Cor da sobreposição do segmento de patrocínio na barra de progresso. A opacidade é fixa; apenas o tom pode ser personalizado.",
+      fr: "Couleur de la superposition du segment sponsorisé sur la barre de progression. L'opacité est fixe ; seule la teinte est personnalisable.",
     },
     sponsorblock_test: {
       en: "🧪 Test mode (fake segment)",
@@ -1281,7 +1359,6 @@
         }
         .yt-preview-container:hover .yt-preview-play-btn,
         .yt-preview-container:hover .yt-preview-comment-btn { opacity: 1 !important; }
-        
         body .yt-preview-container.yt-sfx-hosting .yt-preview-play-btn,
         body .yt-preview-container.yt-sfx-hosting .yt-preview-comment-btn {
             opacity: 0 !important; pointer-events: none !important; transition: none !important;
@@ -1296,7 +1373,6 @@
             max-height: 85vh; overflow-y: auto; width: 400px;
             transition: left 0.25s ease, right 0.25s ease;
         }
-        
         body.yt-preview-playing #yt-master-control-panel {
             right: auto; left: 20px;
         }
@@ -1310,16 +1386,15 @@
             color: white; box-sizing: border-box;
         }
         .yt-comment-btn-hover:hover { opacity: 1 !important; transform: scale(1.05); }
-        
         body.yt-panel-open .yt-preview-play-btn,
         body.yt-panel-open .yt-preview-comment-btn { opacity: 1 !important; }
 
         body.yt-preview-playing ytd-app {
-            pointer-events: none !important; 
+            pointer-events: none !important;
             user-select: none !important;
         }
         body.yt-preview-playing ytd-app * {
-            animation-play-state: paused !important; 
+            animation-play-state: paused !important;
         }
 
         #yt-transition-overlay {
@@ -1336,7 +1411,7 @@
             0%   { transform: translateY(0); opacity: 0; }
             8%   { opacity: 1; }
             92%  { opacity: 1; }
-            100% { transform: translateY(100vh); opacity: 0; } 
+            100% { transform: translateY(100vh); opacity: 0; }
         }
         @keyframes ytScanLines {
             0%   { transform: translateY(0); }
@@ -1382,7 +1457,6 @@
             0%, 100% { opacity: 0.9; }
             50%       { opacity: 0.35; }
         }
-        
         @keyframes ytMonoLine {
             0%   { transform: scaleX(0); opacity: 0; }
             20%  { opacity: 1; }
@@ -1393,7 +1467,6 @@
             0%, 100% { opacity: 0.2; }
             50%      { opacity: 0.8; }
         }
-        
         @keyframes ytNewBadgePulse {
             0%, 100% { opacity: 1;   transform: scale(1);    }
             50%       { opacity: 0.6; transform: scale(1.08); }
@@ -1415,7 +1488,6 @@
             to   { opacity: 1; transform: translateX(0)   scale(1);    }
         }
         #yt-ctrl-dropdown {
-            
             background: rgba(18, 18, 18, 0.96);
             border: 1px solid rgba(255,255,255,0.12);
             border-radius: 10px;
@@ -1864,7 +1936,7 @@
           border-radius: 8px; font-size: 12px; font-weight: 500; max-width: 90vw;
           backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
           border: 1px solid rgba(255, 255, 255, 0.12);
-          z-index: 2147483647; pointer-events: none; opacity: 0;
+          z-index: 2147483649; pointer-events: none; opacity: 0;
           transition: opacity 0.25s ease; white-space: nowrap;
           overflow: hidden; text-overflow: ellipsis;
         `;
@@ -1890,6 +1962,7 @@
             status,
             http,
             notify: !!getCfg("ytSponsorBlockNotify"),
+            markerColor: getCfg("ytSponsorBlockMarkerColor"),
           }),
           "*",
         );
@@ -1906,7 +1979,7 @@
     let data;
     try { data = JSON.parse(e.data); } catch (_) { return; }
     if (!data || !data.type) return;
-    if (data.type === "SB_SKIPPED") {
+    if (data.type === "SB_SKIPPED" || data.type === "SB_NOTICE") {
       if (typeof data.text === "string" && data.text) _sbPageToast(data.text);
       return;
     }
@@ -1988,7 +2061,7 @@
         position:absolute; inset:0; pointer-events:none;
         background: repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(62,166,255,0.045) 2px,rgba(62,166,255,0.045) 4px);
         animation: ytScanLines 2.8s linear infinite;
-        will-change: transform; 
+        will-change: transform;
       `;
       ov.appendChild(lines);
 
@@ -2015,7 +2088,7 @@
         background: linear-gradient(90deg, transparent 0%, #3ea6ff 40%, rgba(62,166,255,0.35) 70%, transparent 100%);
         box-shadow: 0 0 14px 3px rgba(62,166,255,0.55);
         animation: ytScanBar 2s linear infinite;
-        will-change: transform, opacity; 
+        will-change: transform, opacity;
       `;
       ov.appendChild(bar);
 
@@ -2143,7 +2216,7 @@
           background: radial-gradient(circle, ${c} 0%, transparent 60%);
           animation: ytOrbFloat ${dur} ease-in-out ${delay} infinite;
           pointer-events:none;
-          will-change: transform; 
+          will-change: transform;
         `;
         ov.appendChild(orb);
       });
@@ -2170,7 +2243,7 @@
         border-top-color:rgba(108,62,240,0.9);
         border-right-color:rgba(62,166,255,0.6);
         animation: ytGlassArc 1.3s linear infinite;
-        will-change: transform; 
+        will-change: transform;
       `;
       const arc2 = document.createElement("div");
       arc2.style.cssText = `
@@ -2179,7 +2252,7 @@
         border-bottom-color:rgba(168,85,247,0.6);
         border-left-color:rgba(62,166,255,0.3);
         animation: ytGlassArc 2s linear reverse infinite;
-        will-change: transform; 
+        will-change: transform;
       `;
       glassRing.appendChild(arc);
       glassRing.appendChild(arc2);
@@ -2686,6 +2759,7 @@
 
   const NEW_FEATURES = [
     { id: "feat_transition_style", elementId: "ytTransitionStyle" },
+    { id: "feat_sponsorblock_marker_color", elementId: "ytSponsorBlockMarkerColor", badgeHostId: "yt-cp-sb-section" },
   ];
 
   const _getSeenFeatures = () => {
@@ -2701,20 +2775,25 @@
 
   function _applyNewBadges(panel) {
     const seen = _getSeenFeatures();
-    NEW_FEATURES.forEach(({ id, elementId }) => {
+    NEW_FEATURES.forEach(({ id, elementId, badgeHostId }) => {
       if (seen.has(id)) return;
       const el = panel.querySelector(`#${elementId}`);
       if (!el) return;
-
-      const label = el.closest("label") || el.parentElement;
-      if (!label) return;
 
       const badge = document.createElement("span");
       badge.className = "yt-new-badge";
       badge.dataset.newBadge = id;
       badge.textContent = "NEW";
 
-      label.insertBefore(badge, el);
+      if (badgeHostId) {
+        const host = panel.querySelector(`#${badgeHostId}`);
+        if (!host) return;
+        host.appendChild(badge);
+      } else {
+        const label = el.closest("label") || el.parentElement;
+        if (!label) return;
+        label.insertBefore(badge, el);
+      }
 
       const dismiss = () => {
         badge.remove();
@@ -2768,6 +2847,16 @@
     const _mkCheckRow = (lbl, k) => {
       const input = document.createElement("input");
       input.type = "checkbox"; input.id = k; input.checked = !!getCfg(k);
+      const row = _mkRow(lbl, input, _mkResetBtn(k));
+      row.style.alignItems = "center";
+      row.querySelector(".yt-cp-ctrl").style.cssText = "display:flex;align-items:center;justify-content:flex-start;gap:8px;";
+      return row;
+    };
+    
+    const _mkColorRow = (lbl, k) => {
+      const input = document.createElement("input");
+      input.type = "color"; input.id = k; input.value = getCfg(k);
+      input.style.cssText = "width:36px;height:24px;padding:0;border:1px solid #555;border-radius:4px;background:none;cursor:pointer;flex-shrink:0;";
       const row = _mkRow(lbl, input, _mkResetBtn(k));
       row.style.alignItems = "center";
       row.querySelector(".yt-cp-ctrl").style.cssText = "display:flex;align-items:center;justify-content:flex-start;gap:8px;";
@@ -2836,6 +2925,7 @@
     p.appendChild(_mkRangeRow(txt("icon_opacity"), "ytPopupSymbolOpacity", 0.1, 1));
 
     const _cpSbSec = document.createElement("div");
+    _cpSbSec.id = "yt-cp-sb-section";
     _cpSbSec.className = "yt-cp-section";
     _cpSbSec.textContent = "🛡️ " + txt("sponsorblock");
     p.appendChild(_cpSbSec);
@@ -2845,6 +2935,11 @@
     _cpSbHint.textContent = txt("sponsorblock_hint");
     p.appendChild(_cpSbHint);
     p.appendChild(_mkCheckRow(txt("sponsorblock_notify"), "ytSponsorBlockNotify"));
+    p.appendChild(_mkColorRow(txt("sponsorblock_marker_color"), "ytSponsorBlockMarkerColor"));
+    const _cpSbColorHint = document.createElement("div");
+    _cpSbColorHint.style.cssText = "font-size:10px;color:#555;margin:-4px 0 8px;";
+    _cpSbColorHint.textContent = txt("sponsorblock_marker_color_hint");
+    p.appendChild(_cpSbColorHint);
 
     const _cpTransSec = document.createElement("div");
     _cpTransSec.className = "yt-cp-section";
@@ -3111,9 +3206,7 @@
     copyBtn.style.cssText = btnBaseCSS + "display:flex; align-items:center; justify-content:center; width:20px; height:20px;";
     copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
       fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      
       <rect x="8" y="8" width="13" height="13" rx="2"/>
-      
       <path d="M3 16V5a2 2 0 0 1 2-2h9"/>
     </svg>`;
     copyBtn.onmouseenter = () => { copyBtn.style.color = "#fff"; copyBtn.style.background = "rgba(62,166,255,0.3)"; };
