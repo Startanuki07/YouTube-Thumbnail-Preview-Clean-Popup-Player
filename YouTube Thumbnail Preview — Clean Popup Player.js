@@ -9,7 +9,7 @@
 // @name:fr      YouTube Aperçu des Miniatures — Lecteur Popup Épuré
 // @namespace    https://greasyfork.org/en/users/1575945-star-tanuki07
 // @homepageURL  https://github.com/Startanuki07
-// @version      1.6.0.0
+// @version      1.6.0.3
 // @license      MIT
 // @author       Star_tanuki07
 // @icon         https://www.youtube.com/s/desktop/3748dff5/img/favicon_48.png
@@ -24,14 +24,14 @@
 // @connect      sponsor.ajay.app
 // 💡 Uses SponsorBlock data licensed under CC BY-NC-SA 4.0 from https://sponsor.ajay.app/.
 // 💡 API attribution per SponsorBlock license — see https://wiki.sponsor.ajay.app/w/API_Docs
-// @description        Adds ▶ preview and 💬 comment buttons to YouTube thumbnails; opens a clean, overlay-free popup player. Comments require a YouTube Data API key.
-// @description:zh-TW  為 YouTube 縮圖新增 ▶ 預覽與 💬 留言按鈕，以淨化彈窗播放器播放影片（移除疊加層）。留言功能需自行申請 YouTube Data API 金鑰。
-// @description:zh-CN  为 YouTube 缩略图添加 ▶ 预览和 💬 评论按钮，以净化弹窗播放器播放（移除叠加层）。评论功能需自行申请 YouTube Data API 密钥。
-// @description:ja     YouTubeサムネイルに ▶ プレビューと 💬 コメントボタンを追加し、オーバーレイを除去したクリーンなポップアップで再生。コメント機能にはYouTube Data APIキーが必要。
-// @description:ko     YouTube 썸네일에 ▶ 미리보기·💬 댓글 버튼을 추가하고 오버레이를 제거한 클린 팝업 플레이어로 재생합니다. 댓글 기능은 YouTube Data API 키가 필요합니다.
-// @description:es     Agrega botones ▶ de vista previa y 💬 de comentarios a las miniaturas de YouTube; abre un reproductor emergente limpio sin superposiciones. Los comentarios requieren una clave API de YouTube Data.
-// @description:pt-BR  Adiciona botões ▶ de pré-visualização e 💬 de comentários às miniaturas do YouTube; abre um reprodutor popup limpo sem sobreposições. Comentários requerem uma chave API do YouTube Data.
-// @description:fr     Ajoute des boutons ▶ de prévisualisation et 💬 de commentaires aux miniatures YouTube ; ouvre un lecteur popup épuré sans superpositions. Les commentaires nécessitent une clé API YouTube Data.
+// @description        Adds ▶ preview and 💬 comment buttons to YouTube thumbnails; opens a clean, overlay-free popup player that can skip sponsor segments automatically using the SponsorBlock API.
+// @description:zh-TW  為 YouTube 縮圖新增 ▶ 預覽與 💬 留言按鈕，以淨化彈窗播放器播放影片（移除疊加層），並可借助 SponsorBlock API 自動跳過贊助片段。
+// @description:zh-CN  为 YouTube 缩略图添加 ▶ 预览和 💬 评论按钮，以净化弹窗播放器播放（移除叠加层），并可借助 SponsorBlock API 自动跳过赞助片段。
+// @description:ja     YouTubeサムネイルに ▶ プレビューと 💬 コメントボタンを追加し、オーバーレイを除去したクリーンなポップアップで再生。SponsorBlock API を利用したスポンサー区間の自動スキップにも対応。
+// @description:ko     YouTube 썸네일에 ▶ 미리보기·💬 댓글 버튼을 추가하고 오버레이를 제거한 클린 팝업 플레이어로 재생하며, SponsorBlock API로 스폰서 구간을 자동으로 건너뛸 수 있습니다.
+// @description:es     Agrega botones ▶ de vista previa y 💬 de comentarios a las miniaturas de YouTube; abre un reproductor emergente limpio sin superposiciones que puede omitir automáticamente los segmentos de patrocinio mediante la API de SponsorBlock.
+// @description:pt-BR  Adiciona botões ▶ de pré-visualização e 💬 de comentários às miniaturas do YouTube; abre um reprodutor popup limpo sem sobreposições que pode pular automaticamente os segmentos de patrocínio usando a API do SponsorBlock.
+// @description:fr     Ajoute des boutons ▶ de prévisualisation et 💬 de commentaires aux miniatures YouTube ; ouvre un lecteur popup épuré sans superpositions qui peut ignorer automatiquement les segments sponsorisés grâce à l'API de SponsorBlock.
 // ==/UserScript==
 
 (function () {
@@ -527,7 +527,7 @@
     ytTransitionEnabled: false,
     ytTransitionStyle: "scan",
     ytTransitionDelay: 600,
-    ytSponsorBlockEnabled: false,
+    ytSponsorBlockEnabled: true,
     ytSponsorBlockNotify: true,
     ytSponsorBlockTestMode: false,
     ytSponsorBlockMarkerColor: "#ffaa00",
@@ -730,6 +730,26 @@
       es: "¿Restablecer a valores predeterminados?",
       "pt-BR": "Redefinir para padrões?",
       fr: "Réinitialiser aux valeurs par défaut ?",
+    },
+    reset_delete_api_key: {
+      en: "Also delete my saved API Key",
+      "zh-TW": "同時刪除已儲存的 API Key",
+      "zh-CN": "同时删除已保存的 API Key",
+      ja: "保存済みの APIキーも削除する",
+      ko: "저장된 API 키도 삭제",
+      es: "Eliminar también mi clave API guardada",
+      "pt-BR": "Excluir também minha chave API salva",
+      fr: "Supprimer aussi ma clé API enregistrée",
+    },
+    reset_keep_note: {
+      en: "Language and player size are not changed.",
+      "zh-TW": "語言與播放器尺寸不會被重置。",
+      "zh-CN": "语言与播放器尺寸不会被重置。",
+      ja: "言語とプレーヤーのサイズは変更されません。",
+      ko: "언어와 플레이어 크기는 변경되지 않습니다.",
+      es: "El idioma y el tamaño del reproductor no se modifican.",
+      "pt-BR": "O idioma e o tamanho do reprodutor não são alterados.",
+      fr: "La langue et la taille du lecteur ne sont pas modifiées.",
     },
 
     close: {
@@ -1212,6 +1232,94 @@
         window.location.reload();
       }, 600);
     };
+  }
+
+  function showResetDialog(hasApiKey, onConfirm) {
+    document.getElementById("yt-reset-dialog-overlay")?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "yt-reset-dialog-overlay";
+    overlay.style.cssText = `
+      position: fixed; inset: 0; z-index: 2147483651;
+      background: rgba(0, 0, 0, 0.82);
+      display: flex; align-items: center; justify-content: center;
+    `;
+
+    const dialog = document.createElement("div");
+    dialog.id = "yt-reset-dialog";
+    dialog.style.cssText = `
+      background: #1e1e1e; color: #fff; border-radius: 14px;
+      padding: 28px 32px; min-width: 300px; max-width: 420px;
+      box-shadow: 0 8px 48px rgba(0,0,0,0.85);
+      display: flex; flex-direction: column; gap: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      border: 1px solid #333;
+    `;
+
+    const titleEl = document.createElement("div");
+    titleEl.style.cssText = "font-size:18px; font-weight:700; color:#3ea6ff;";
+    titleEl.textContent = "↺ " + txt("reset");
+
+    const msgEl = document.createElement("div");
+    msgEl.style.cssText = "font-size:15px; color:#ccc; line-height:1.6;";
+    msgEl.textContent = txt("confirm_reset");
+
+    const noteEl = document.createElement("div");
+    noteEl.style.cssText = "font-size:12px; color:#888; line-height:1.5;";
+    noteEl.textContent = txt("reset_keep_note");
+
+    dialog.appendChild(titleEl);
+    dialog.appendChild(msgEl);
+    dialog.appendChild(noteEl);
+
+    let keyCheck = null;
+    if (hasApiKey) {
+      const keyLabel = document.createElement("label");
+      keyLabel.style.cssText = "display:flex; align-items:center; gap:8px; font-size:13px; color:#ddd; cursor:pointer;";
+      keyCheck = document.createElement("input");
+      keyCheck.type = "checkbox";
+      keyCheck.checked = false;
+      const keyText = document.createElement("span");
+      keyText.textContent = txt("reset_delete_api_key");
+      keyLabel.appendChild(keyCheck);
+      keyLabel.appendChild(keyText);
+      dialog.appendChild(keyLabel);
+    }
+
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex; gap:12px; justify-content:flex-end; margin-top:4px;";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = txt("lang_switch_cancel");
+    cancelBtn.style.cssText = "padding:8px 20px;border-radius:6px;border:1px solid #555;background:#333;color:#ccc;cursor:pointer;font-size:14px;";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.textContent = txt("reset");
+    confirmBtn.style.cssText = "padding:8px 20px;border-radius:6px;border:none;background:#3ea6ff;color:#000;cursor:pointer;font-size:14px;font-weight:700;";
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(confirmBtn);
+    dialog.appendChild(btnRow);
+
+    function close() {
+      document.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+    }
+    function onKey(e) {
+      if (e.key === "Escape") { e.stopPropagation(); close(); }
+    }
+    document.addEventListener("keydown", onKey, true);
+
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    cancelBtn.onclick = close;
+    confirmBtn.onclick = () => {
+      const deleteApiKey = !!(keyCheck && keyCheck.checked);
+      close();
+      onConfirm(deleteApiKey);
+    };
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    cancelBtn.focus();
   }
 
   let API_KEY = getCfg("yt_comment_api_key");
@@ -2294,6 +2402,13 @@
   function showPlayer(overlay, videoId, shorts = false) {
     if (!overlay || !videoId) return;
 
+    if (overlay._blankTimer) {
+      clearTimeout(overlay._blankTimer);
+      overlay._blankTimer = null;
+      const _pendingIframe = overlay.querySelector("iframe");
+      if (_pendingIframe) _pendingIframe.src = "about:blank";
+    }
+
     document.body.classList.add("yt-preview-playing");
     _pauseObserver();
     document.querySelectorAll("video").forEach(v => {
@@ -2406,7 +2521,9 @@
       post("mute");
       post("setVolume", [0]);
 
-      setTimeout(() => {
+      clearTimeout(overlay._blankTimer);
+      overlay._blankTimer = setTimeout(() => {
+        overlay._blankTimer = null;
         iframe.src = "about:blank";
       }, 150);
     }
@@ -2835,7 +2952,8 @@
     const _mkRangeRow = (lbl, k, min, max) => {
       const input = document.createElement("input");
       input.type = "range"; input.id = k; input.min = min; input.max = max;
-      input.value = getCfg(k); input.step = max <= 1 ? "0.1" : "1";
+      input.step = max <= 1 ? "0.05" : "1";
+      input.value = getCfg(k);
       input.style.cssText = "flex:1;min-width:0;";
       const valSpan = document.createElement("span");
       valSpan.id = "d_" + k;
@@ -3096,10 +3214,14 @@
 
     p.querySelector("#yt-reset").onclick = (e) => {
       e.stopPropagation();
-      if (confirm(txt("confirm_reset"))) {
-        for (let k in DEFAULTS) GM_setValue(k, DEFAULTS[k]);
+      showResetDialog(!!API_KEY, (deleteApiKey) => {
+        for (let k in DEFAULTS) {
+          if (k === "ytLanguage" || k === "ytPlayerSizeIndex") continue;
+          if (k === "yt_comment_api_key" && !deleteApiKey) continue;
+          GM_setValue(k, DEFAULTS[k]);
+        }
         location.reload();
-      }
+      });
     };
 
     p.querySelector("#yt-save").onclick = async (e) => {
@@ -3663,11 +3785,12 @@
       clearTimeout(_searchDebounce);
       _searchDebounce = setTimeout(() => {
         render(
-          allComments.filter(
-            (c) =>
-            c.text.toLowerCase().includes(k) ||
-            c.plain?.toLowerCase().includes(k),
-          ),
+          allComments.filter((c) => {
+            if (c._search === undefined) {
+              c._search = (cleanHTML(c.text) + "\n" + (c.plain || "")).toLowerCase();
+            }
+            return c._search.includes(k);
+          }),
         );
       }, 250);
     };
